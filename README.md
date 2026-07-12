@@ -60,6 +60,7 @@ Once per login: `/autojoin eqov` — then, right after killing a named:
 | `add 4:25` | …with the real respawn time |
 | ``add 4:25 Baron Telyx V`Zher`` | …by name — **shares to everyone in the channel** |
 | `remove` | undo the last add |
+| `zone 9:30` | set THIS zone's default respawn — bare `add`s here use it (`zone clear` unsets) |
 
 💡 Put `/1 add` in a **social macro** — one hotbar button, no typing. Or skip all of this and use the **Rares tab** in the settings window: recent kills, one-click add.
 

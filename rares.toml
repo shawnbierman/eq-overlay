@@ -45,3 +45,9 @@ name = "Knight V`Tal"
 zone = "Befallen 4 (Refined)"
 respawn_seconds = 300
 notes = "added in-game 2026-07-12"
+
+[[rare]]
+name = "ghoul assassin"
+zone = "The Ruins of Old Guk"
+respawn_seconds = 300
+notes = "added in-game 2026-07-12"

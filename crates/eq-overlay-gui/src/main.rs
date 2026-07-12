@@ -119,6 +119,7 @@ fn main() -> Result<()> {
         command_channel: "eqov".to_string(),
         audio_enabled: true,
         spawn_sound: "default".to_string(),
+        zone_respawn: Default::default(),
     };
 
     if let Some(cfg) = cfg {
@@ -133,6 +134,7 @@ fn main() -> Result<()> {
         if let Some(s) = &cfg.audio.spawn_sound {
             info.spawn_sound = s.clone();
         }
+        info.zone_respawn = cfg.zone_respawn.clone();
         info.game_dir = icon_dir
             .as_ref()
             .and_then(|d| d.parent())

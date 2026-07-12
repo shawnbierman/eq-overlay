@@ -147,6 +147,10 @@ fn tail(
             Ok(EngineEvent::RareUpdated { name, respawn_seconds }) => {
                 println!("          [RARE ~ ] {name} respawn calibrated to {respawn_seconds}s");
             }
+            Ok(EngineEvent::ZoneDefaultSet { zone, respawn_seconds }) => match respawn_seconds {
+                Some(s) => println!("          [ZONE = ] {zone} default respawn {s}s"),
+                None => println!("          [ZONE = ] {zone} default respawn cleared"),
+            },
             Ok(EngineEvent::Damage { .. }) => {} // summed by the GUI; too noisy to print
             Err(RecvTimeoutError::Timeout) => {
                 if deadline.is_some() {

@@ -44,7 +44,8 @@ const PENDING_TTL: Duration = Duration::from_secs(20);
 pub enum Control {
     AddRare {
         name: String,
-        respawn_seconds: u64,
+        /// None = use the current zone's default respawn (then 5:00).
+        respawn_seconds: Option<u64>,
         /// When the mob died, if known — the respawn bar is backdated to it so
         /// adding from the "recent kills" list keeps the countdown accurate.
         killed_at: Option<Instant>,
@@ -133,6 +134,7 @@ pub fn spawn_pipeline_with_control(
     let rare_db_path = config.rare_db_path.clone();
     let cmd_channel =
         config.general.command_channel.clone().unwrap_or_else(|| "eqov".to_string());
+    let zone_respawn = config.zone_respawn.clone();
     let join = thread::spawn(move || {
         run(
             engine,
@@ -143,6 +145,7 @@ pub fn spawn_pipeline_with_control(
             rares,
             rare_db_path,
             cmd_channel,
+            zone_respawn,
             control_rx,
             events_tx,
         )
@@ -160,6 +163,7 @@ fn run(
     mut rares: HashMap<String, (u64, Option<u32>)>,
     rare_db_path: Option<PathBuf>,
     cmd_channel: String,
+    mut zone_respawn: HashMap<String, u64>,
     control_rx: Receiver<Control>,
     events_tx: Sender<EngineEvent>,
 ) -> Result<()> {
@@ -272,12 +276,15 @@ fn run(
             match c {
                 Control::AddRare { name, respawn_seconds, killed_at } => {
                     last_added = Some(name.clone());
+                    let secs = respawn_seconds
+                        .or_else(|| zone_default(&zone_respawn, current_zone.as_deref()))
+                        .unwrap_or(300);
                     if do_add(
                         &mut rares,
                         &rare_db_path,
                         &events_tx,
                         &name,
-                        respawn_seconds,
+                        secs,
                         current_zone.clone(),
                         None,
                         killed_at.unwrap_or_else(Instant::now),
@@ -536,7 +543,10 @@ fn run(
                 });
             if let Some((sender, cmd)) = cmd {
                 if let Some(rest) = cmd.strip_prefix("add").filter(|r| r.is_empty() || r.starts_with(' ')) {
-                    let (secs, explicit_name) = parse_add(rest.trim());
+                    let (given, explicit_name) = parse_add(rest.trim());
+                    let secs = given
+                        .or_else(|| zone_default(&zone_respawn, current_zone.as_deref()))
+                        .unwrap_or(300);
                     // A remote bare `add` refers to THEIR last kill — which we
                     // can't see — so remote adds need an explicit name.
                     let name = match &sender {
@@ -591,6 +601,42 @@ fn run(
                                 }
                             }
                             Some(false) => {}
+                        }
+                    }
+                } else if let Some(rest) =
+                    cmd.strip_prefix("zone").filter(|r| r.is_empty() || r.starts_with(' '))
+                {
+                    // `zone 9:30` — set the CURRENT zone's default respawn
+                    // (what a bare `add` uses here); `zone clear` removes it.
+                    // Own messages only: your zone is yours.
+                    if sender.is_none() {
+                        if let Some(z) = current_zone.as_deref().map(normalize_zone) {
+                            let rest = rest.trim();
+                            let new = if rest.eq_ignore_ascii_case("clear") {
+                                zone_respawn.remove(&z);
+                                Some(None)
+                            } else {
+                                parse_secs(rest).map(|s| {
+                                    zone_respawn.insert(z.clone(), s);
+                                    Some(s)
+                                })
+                            };
+                            if let Some(secs) = new {
+                                if let Some(p) = &rare_db_path {
+                                    upsert_zone_respawn_in_file(p, &z, secs);
+                                }
+                                if send(
+                                    &events_tx,
+                                    EngineEvent::ZoneDefaultSet {
+                                        zone: z,
+                                        respawn_seconds: secs,
+                                    },
+                                )
+                                .is_none()
+                                {
+                                    return Ok(());
+                                }
+                            }
                         }
                     }
                 }
@@ -733,21 +779,112 @@ fn channel_cmd_other_regex(channel: &str) -> Regex {
         .expect("valid channel command regex")
 }
 
-/// Grammar of `add`: `[m:ss | seconds] [mob name]` -> (secs, explicit name).
-fn parse_add(rest: &str) -> (u64, Option<String>) {
+/// Grammar of `add`: `[m:ss | seconds] [mob name]` -> (explicit secs, explicit
+/// name). A missing time falls back to the zone default, then 5:00.
+fn parse_add(rest: &str) -> (Option<u64>, Option<String>) {
     match rest.split_once(' ') {
-        None if rest.is_empty() => (300, None),
+        None if rest.is_empty() => (None, None),
         None => match parse_secs(rest) {
-            Some(s) => (s, None),
-            None => (300, Some(rest.to_string())),
+            Some(s) => (Some(s), None),
+            None => (None, Some(rest.to_string())),
         },
         Some((first, tail)) => match parse_secs(first) {
             Some(s) => {
                 let t = tail.trim();
-                (s, (!t.is_empty()).then(|| t.to_string()))
+                (Some(s), (!t.is_empty()).then(|| t.to_string()))
             }
-            None => (300, Some(rest.to_string())),
+            None => (None, Some(rest.to_string())),
         },
+    }
+}
+
+/// Look up the default respawn for the (normalized) current zone.
+fn zone_default(zone_respawn: &HashMap<String, u64>, zone: Option<&str>) -> Option<u64> {
+    zone.map(normalize_zone).and_then(|z| zone_respawn.get(&z).copied())
+}
+
+/// Normalize a zone name so instances share one identity: drop a trailing
+/// parenthetical and a trailing instance number — "Befallen 4 (Refined)" and
+/// "Befallen 2 (Adaptive)" both become "Befallen".
+pub fn normalize_zone(z: &str) -> String {
+    let mut s = z.trim();
+    if s.ends_with(')') {
+        if let Some(i) = s.rfind(" (") {
+            s = &s[..i];
+        }
+    }
+    let s = s.trim_end();
+    let s = match s.rsplit_once(' ') {
+        Some((head, last)) if !last.is_empty() && last.chars().all(|c| c.is_ascii_digit()) => head,
+        _ => s,
+    };
+    s.trim_end().to_string()
+}
+
+/// Upsert (or remove, when `secs` is None) a `[zone_respawn]` entry in the DB
+/// file — same byte-preserving surgery as the rare add/remove helpers.
+fn upsert_zone_respawn_in_file(path: &Path, zone: &str, secs: Option<u64>) {
+    let text = std::fs::read_to_string(path).unwrap_or_default();
+    let new_line = secs.map(|s| format!("\"{zone}\" = {s}"));
+    let mut out = String::new();
+    let mut in_table = false;
+    let mut table_found = false;
+    let mut done = false;
+
+    for line in text.lines() {
+        let t = line.trim();
+        if t == "[zone_respawn]" {
+            in_table = true;
+            table_found = true;
+            out.push_str(line);
+            out.push('\n');
+            continue;
+        }
+        if in_table {
+            if t.starts_with('[') {
+                // Table ends here — insert the new entry before leaving it.
+                if !done {
+                    if let Some(l) = &new_line {
+                        out.push_str(l);
+                        out.push('\n');
+                    }
+                    done = true;
+                }
+                in_table = false;
+            } else if let Some(eq) = t.find('=') {
+                let key = t[..eq].trim().trim_matches('"');
+                if key.eq_ignore_ascii_case(zone) {
+                    // Replace (or drop) the existing entry in place, keeping
+                    // the key's original casing.
+                    if !done {
+                        if let Some(s) = secs {
+                            out.push_str(&format!("\"{key}\" = {s}\n"));
+                        }
+                        done = true;
+                    }
+                    continue;
+                }
+            }
+        }
+        out.push_str(line);
+        out.push('\n');
+    }
+    if in_table && !done {
+        if let Some(l) = &new_line {
+            out.push_str(l);
+            out.push('\n');
+        }
+        done = true;
+    }
+    if !table_found && !done {
+        if let Some(l) = &new_line {
+            out.push_str("\n[zone_respawn]\n");
+            out.push_str(l);
+            out.push('\n');
+        }
+    }
+    if let Err(e) = std::fs::write(path, out) {
+        eprintln!("[warn] couldn't rewrite rare DB {}: {e}", path.display());
     }
 }
 
@@ -1055,16 +1192,16 @@ mod tests {
         assert!(re.captures("You tell eqov:3, 'add'").is_none()); // own line not doubled
         assert!(re.captures("Gruffy tells General:1, 'add'").is_none());
 
-        // add grammar: (secs, explicit name)
-        assert_eq!(super::parse_add(""), (300, None));
-        assert_eq!(super::parse_add("4:25"), (265, None));
+        // add grammar: (explicit secs, explicit name)
+        assert_eq!(super::parse_add(""), (None, None));
+        assert_eq!(super::parse_add("4:25"), (Some(265), None));
         assert_eq!(
             super::parse_add("4:25 Baron Telyx V`Zher"),
-            (265, Some("Baron Telyx V`Zher".to_string()))
+            (Some(265), Some("Baron Telyx V`Zher".to_string()))
         );
         assert_eq!(
             super::parse_add("Baron Telyx V`Zher"),
-            (300, Some("Baron Telyx V`Zher".to_string()))
+            (None, Some("Baron Telyx V`Zher".to_string()))
         );
 
         assert_eq!(super::parse_secs("265"), Some(265));
@@ -1072,6 +1209,51 @@ mod tests {
         assert_eq!(super::parse_secs("0:45"), Some(45));
         assert_eq!(super::parse_secs("4:99"), None);
         assert_eq!(super::parse_secs("Baron"), None);
+    }
+
+    #[test]
+    fn zone_names_normalize_across_instances() {
+        assert_eq!(super::normalize_zone("Befallen 4 (Refined)"), "Befallen");
+        assert_eq!(super::normalize_zone("Befallen 2 (Adaptive)"), "Befallen");
+        assert_eq!(super::normalize_zone("New Sebilis Expedition 31"), "New Sebilis Expedition");
+        assert_eq!(super::normalize_zone("The Ruins of Old Guk"), "The Ruins of Old Guk");
+        assert_eq!(super::normalize_zone("North Freeport"), "North Freeport");
+    }
+
+    #[test]
+    fn zone_respawn_upserts_into_the_db_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("rares.toml");
+        std::fs::write(&p, "# header\n\n[[rare]]\nname = \"Priest Amiaz\"\nrespawn_seconds = 450\n")
+            .unwrap();
+
+        // Create the table.
+        super::upsert_zone_respawn_in_file(&p, "The Ruins of Old Guk", Some(570));
+        let t = std::fs::read_to_string(&p).unwrap();
+        assert!(t.contains("[zone_respawn]"));
+        assert!(t.contains("\"The Ruins of Old Guk\" = 570"));
+        assert!(t.contains("Priest Amiaz"), "rares untouched");
+
+        // Update in place (no duplicate key), add a second zone.
+        super::upsert_zone_respawn_in_file(&p, "the ruins of old guk", Some(540));
+        super::upsert_zone_respawn_in_file(&p, "Befallen", Some(300));
+        let t = std::fs::read_to_string(&p).unwrap();
+        assert_eq!(t.matches("The Ruins of Old Guk").count(), 1);
+        assert!(t.contains("= 540"));
+        assert!(!t.contains("= 570"));
+        assert!(t.contains("\"Befallen\" = 300"));
+
+        // The file still parses as a valid rare DB with both sections.
+        let cfgp = dir.path().join("config.toml");
+        std::fs::write(&cfgp, "").unwrap();
+        let cfg = crate::config::Config::load(&cfgp).unwrap();
+        assert_eq!(cfg.zone_respawn.get("The Ruins of Old Guk"), Some(&540));
+        assert_eq!(cfg.rares.len(), 1);
+
+        // Clear removes the entry.
+        super::upsert_zone_respawn_in_file(&p, "Befallen", None);
+        let t = std::fs::read_to_string(&p).unwrap();
+        assert!(!t.contains("Befallen"));
     }
 
     #[test]

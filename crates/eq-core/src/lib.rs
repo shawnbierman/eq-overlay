@@ -40,8 +40,8 @@ pub use duration::{duration_seconds, duration_ticks};
 pub use events::{EngineEvent, TimerEvent, TriggerEvent};
 pub use parser::{parse_line, LogLine};
 pub use pipeline::{
-    parse_secs, spawn_pipeline, spawn_pipeline_with_control, Control, PipelineHandle,
-    PipelineOptions,
+    normalize_zone, parse_secs, spawn_pipeline, spawn_pipeline_with_control, Control,
+    PipelineHandle, PipelineOptions,
 };
 pub use spelldb::{SpellDb, SpellInfo};
 pub use tailer::Tailer;

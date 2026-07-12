@@ -55,6 +55,9 @@ pub struct StartupInfo {
     pub audio_enabled: bool,
     /// Spawn-chime sound id or .wav path (config `[audio] spawn_sound`).
     pub spawn_sound: String,
+    /// Per-zone default respawns (normalized zone -> secs), live-updated by
+    /// the in-game `zone` command.
+    pub zone_respawn: HashMap<String, u64>,
 }
 
 /// If a timer's clear (wear-off) line is missed, drop it this long past its
@@ -506,6 +509,14 @@ impl OverlayApp {
                         }
                     }
                 }
+                EngineEvent::ZoneDefaultSet { zone, respawn_seconds } => match respawn_seconds {
+                    Some(s) => {
+                        self.info.zone_respawn.insert(zone, s);
+                    }
+                    None => {
+                        self.info.zone_respawn.remove(&zone);
+                    }
+                },
                 EngineEvent::Trigger(_) => {} // no feed in the clean UI
             }
         }
@@ -914,15 +925,29 @@ impl OverlayApp {
         ui.separator();
 
         // ── Recent kills: ONLY untracked mobs — pure add candidates ──────
+        let zone_default = self
+            .info
+            .zone_respawn
+            .get(&eq_core::normalize_zone(&self.zone))
+            .copied();
         ui.horizontal(|ui| {
             ui.label(RichText::new("Add from recent kills").color(INK).strong().size(12.0));
             ui.add_space(8.0);
             ui.colored_label(dim, "respawn");
+            let hint = zone_default
+                .map(|s| fmt_remaining(Duration::from_secs(s)))
+                .unwrap_or_else(|| "5:00".into());
             ui.add(
                 egui::TextEdit::singleline(&mut self.add_secs_edit)
                     .desired_width(52.0)
-                    .hint_text("5:00"),
+                    .hint_text(hint),
             );
+            if let Some(s) = zone_default {
+                ui.colored_label(
+                    dim,
+                    format!("zone default: {}", fmt_remaining(Duration::from_secs(s))),
+                );
+            }
         });
         let tracked: Vec<String> =
             self.info.rares.iter().map(|r| r.name.to_lowercase()).collect();
@@ -942,7 +967,8 @@ impl OverlayApp {
                 },
             );
         } else {
-            let secs = eq_core::parse_secs(self.add_secs_edit.trim()).unwrap_or(300);
+            // None = let the pipeline apply the zone default (then 5:00).
+            let secs = eq_core::parse_secs(self.add_secs_edit.trim());
             egui::ScrollArea::vertical().id_salt("kills").max_height(92.0).show(ui, |ui| {
                 egui::Grid::new("eqov-kills").num_columns(3).spacing([14.0, 3.0]).show(
                     ui,
@@ -975,8 +1001,9 @@ impl OverlayApp {
         ui.label(
             RichText::new(format!(
                 "In game: /join {ch}, then  add  /  add 4:25  /  remove  after a kill — a social \
-                 macro with  /1 add  makes it one button. Named adds sync to the whole channel; \
-                 respawns tighten automatically as you camp.",
+                 macro with  /1 add  makes it one button.  zone 9:30  sets this zone's default \
+                 respawn (bare adds use it). Named adds sync to the whole channel; respawns \
+                 tighten automatically as you camp.",
                 ch = self.info.command_channel,
             ))
             .size(10.5)

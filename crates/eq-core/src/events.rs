@@ -37,6 +37,9 @@ pub enum EngineEvent {
     /// A rare's respawn time was auto-calibrated (tightened) from observed
     /// kill-to-kill gaps while camping it.
     RareUpdated { name: String, respawn_seconds: u64 },
+    /// A per-zone default respawn was set (or cleared, when None) via the
+    /// in-game `zone` command. Bare `add`s in that zone use it.
+    ZoneDefaultSet { zone: String, respawn_seconds: Option<u64> },
     /// The player dealt `amount` damage (melee, direct spell, or DoT tick). The
     /// overlay sums these over a rolling window for a live DPS readout.
     Damage { amount: u64 },

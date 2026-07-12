@@ -36,6 +36,11 @@ pub struct Config {
     pub triggers: Vec<TriggerConfig>,
     #[serde(default)]
     pub audio: AudioConfig,
+    /// Per-zone default respawn seconds (normalized zone name -> secs): what a
+    /// bare `add` uses in that zone. Lives in the shareable rare DB's
+    /// `[zone_respawn]` table; entries here override it.
+    #[serde(default)]
+    pub zone_respawn: std::collections::HashMap<String, u64>,
     /// Resolved path of the shareable rare DB (set by `load`, even when the
     /// file doesn't exist yet) — where in-game `add` commands append entries.
     #[serde(skip)]
@@ -247,11 +252,17 @@ impl Config {
         struct RareDb {
             #[serde(default, rename = "rare")]
             rares: Vec<RareConfig>,
+            #[serde(default)]
+            zone_respawn: std::collections::HashMap<String, u64>,
         }
         let text = std::fs::read_to_string(&path)
             .with_context(|| format!("failed to read rare DB: {}", path.display()))?;
         let db: RareDb = toml::from_str(&text)
             .with_context(|| format!("failed to parse rare DB: {}", path.display()))?;
+        // Zone defaults: DB first, personal config entries override.
+        let mut zr = db.zone_respawn;
+        zr.extend(std::mem::take(&mut self.zone_respawn));
+        self.zone_respawn = zr;
         // DB entries first, then existing config entries — so config overrides DB.
         let mut merged = db.rares;
         merged.append(&mut self.rares);
