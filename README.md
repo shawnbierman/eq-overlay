@@ -1,129 +1,85 @@
-# EQ Overlay
+<h1 align="center">🕐 EQ Overlay</h1>
 
-A transparent, click-through timer overlay for **EverQuest Legends** (and other
-EQEmu-family servers). It tails your log file and draws what an enchanter
-actually needs on top of the game:
+<p align="center">
+  <img alt="Windows" src="https://img.shields.io/badge/Windows_10%2F11-0078D6">
+  <img alt="Made for EverQuest Legends" src="https://img.shields.io/badge/EverQuest-Legends-FFCB00">
+  <img alt="Rust" src="https://img.shields.io/badge/Rust-stable-E43717?logo=rust&logoColor=white">
+  <a href="https://github.com/shawnbierman/eq-overlay/releases"><img alt="Download" src="https://img.shields.io/badge/⬇_download-zip-2ea44f"></a>
+  <img alt="MIT" src="https://img.shields.io/badge/license-MIT-blue">
+</p>
 
-- **Spell bars for every detrimental spell you cast** — zero trigger setup.
-  The app reads the game's own spell data, so the land message, level-scaled
-  duration, and real spell-gem icon all come along for free. Mote-ranked
-  spells ("Mesmerization III") resolve automatically.
-- **Rare respawn timers** with a shared, community-editable database,
-  one-button in-game adds, and respawn times that calibrate themselves as you
-  camp.
-- **Live DPS** and the current zone in a BeOS-style title tab.
+<p align="center"><b>Spell timers and rare-respawn tracking, drawn right over the game.</b><br/>
+Reads your log file only — no injection, no automation, nothing to configure.</p>
 
-It reads the log file only — no memory reading, no injection, no automation.
-Same class of tool as GINA or nparse. (Check your server's third-party-tool
-policy if you're unsure.)
+**Jump to:** [Setup](#setup) · [What you get](#what-you-get) · [In-game commands](#in-game-commands) · [Build it yourself](#-building-from-source) · [Help](#-troubleshooting)
 
-## Contents
+## Setup
 
-- [Quick start](#quick-start)
-- [The overlay](#the-overlay)
-- [Rares: the shared database](#rares-the-shared-database)
-- [Settings window](#settings-window)
-- [Configuration](#configuration)
-- [Building from source](#building-from-source)
-  - [Workspace layout](#workspace-layout)
-  - [Try it without EverQuest](#try-it-without-everquest)
-- [Troubleshooting](#troubleshooting)
-- [License](#license)
+1. **[Download the zip](https://github.com/shawnbierman/eq-overlay/releases)** and unzip it anywhere (Desktop is fine).
+2. **Run `eq-overlay-gui.exe`.** Windows will say "unknown publisher" the first time → **More info → Run anyway**.
+3. In game: **`/log on`**, and play in **borderless windowed**.
 
-## Quick start
+Done. It finds your EQ install by itself and lives in the system tray (🕐 yellow icon = settings). No config files, no triggers to write.
 
-1. Grab the latest release zip and unpack it anywhere (keep the files
-   together).
-2. Run `eq-overlay-gui.exe`.
-   - Windows SmartScreen will warn about an unknown publisher the first time:
-     **More info → Run anyway**. The app is unsigned; the source is right here
-     if you'd rather build it yourself.
-3. First run auto-detects your EverQuest Legends install. If it can't find it,
-   the settings window opens — pick the game folder (the one containing
-   `spells_us.txt`).
-4. In game, make sure logging is on: `/log on`.
+## What you get
 
-That's it. The app lives in the **system tray** (yellow clock icon). There is
-no console window — status lives in the settings window, reachable from the
-tray icon, the taskbar, or **Alt-Tab** ("EQ Overlay").
+- 🪄 **A bar for every debuff you land** — mez, slow, root, DoT… with the real spell icons and level-correct durations, straight from the game's own data. Cast it, see it. Zero setup.
+- ⏰ **Rare respawn timers** — kill a named, type `add`, and a countdown clock starts. It **chimes and flashes** when the rare is due, and respawn times calibrate themselves as you camp.
+- 🤝 **A shared database** — everyone in the `eqov` chat channel gets each other's named adds, live. The file (`rares.toml`) is plain text you can trade around too.
+- 📊 **Zone + live DPS** in a little BeOS-style tab. The overlay never eats your mouse clicks.
 
-## The overlay
+## How it works
 
-- **Spell bars**: `[icon] target (spell) [countdown]`, color-coded by effect
-  (mez, slow, root, calm, DoT, …). Identically-named mobs share one bar with
-  an `x2` badge that counts down as each breaks. Re-casting refreshes the bar
-  (the spurious "worn off" EQ logs on a refresh is understood), while a real
-  break — "`<mob> has been awakened by <attacker>`" — clears it instantly.
-- **Spawn bars**: killing a tracked rare (by *anyone* in the zone) starts a
-  gold countdown with a small analog clock — the hand sweeps one revolution
-  and lands on 12 as the rare comes due. It chimes once, shows a green **UP**
-  for a minute, then tidies itself away.
-- Zoning (or entering a fresh instance) clears every bar — a new instance
-  spawns its rares up, so stale timers never lie to you.
-- The overlay never captures the mouse. Position/size live in the config.
+```mermaid
+flowchart LR
+    LOG["🎮 your EQ log file"] --> APP{{"🕐 eq-overlay"}}
+    DATA["📜 the game's spell data"] --> APP
+    APP --> BARS["⏳ timer bars over the game"]
+    APP <--> DB[("rares.toml<br/>respawn database")]
+    APP <--> CHAT["💬 eqov channel<br/>(shared adds)"]
 
-## Rares: the shared database
-
-Rare respawns live in **`rares.toml`** next to the app — a plain, shareable
-file. Three ways to manage it:
-
-**In game** (the fun way). Join the command channel once:
-
-```
-/autojoin eqov
+    classDef gold fill:#ffcb00,stroke:#302606,color:#302606
+    classDef dark fill:#181a1f,stroke:#666,color:#eee
+    class APP gold
+    class LOG,DATA,BARS,DB,CHAT dark
 ```
 
-Then, right after killing a named:
+## In-game commands
 
-| you type | effect |
+Once per login: `/autojoin eqov` — then, right after killing a named:
+
+| type | it does |
 |---|---|
-| `add` | track the last mob you killed (5:00 default) |
-| `add 4:25` | same, with the respawn time |
-| `add 4:25 Baron Telyx V`Zher` | track by name |
-| `remove` | undo the most recent add |
-| `remove <name>` | untrack by name |
+| `add` | track the last mob you killed (5:00 guess) |
+| `add 4:25` | …with the real respawn time |
+| `add 4:25 Baron Telyx V`Zher` | …by name — **shares to everyone in the channel** |
+| `remove` | undo the last add |
 
-Tip: put `/1 add` in a **social macro** on your hotbar — one button, no
-typing.
+💡 Put `/1 add` in a **social macro** — one hotbar button, no typing. Or skip all of this and use the **Rares tab** in the settings window: recent kills, one-click add.
 
-Because `eqov` is a normal chat channel, **everyone in it shares adds**: an
-`add`/`remove` that includes the mob's name updates the database of every
-channel member, live. Prefer privacy? Set your own channel name in Settings →
-Setup.
+<details>
+<summary>🔧 <b>Building from source</b> (optional — for devs, or if Smart App Control blocks unsigned exes)</summary>
 
-**In the app**: the Rares tab lists everything tracked (hover a name for
-notes, ✕ to remove) plus your recent kills with one-click **Add** — backdated
-to the actual kill, so the countdown is right even if you add it late.
+```powershell
+winget install Rustlang.Rustup Microsoft.VisualStudio.2022.BuildTools
+git clone https://github.com/shawnbierman/eq-overlay
+cd eq-overlay
+cargo build --release -p eq-overlay-gui
+```
 
-**By hand**: it's TOML. Edit, share, merge — duplicates collapse safely on
-load, and re-adds update in place.
+Run the exe from the repo folder (it looks for `config.example.toml` / `rares.toml` beside it). Windows-only: the transparent click-through window needs wgpu/DirectComposition. `cargo test` runs the suite; `cargo run -p eq-cli -- gen --log test.log` fakes log lines so you can try everything without the game.
 
-Respawn times **calibrate themselves**: while you camp a rare, the app watches
-kill-to-kill gaps and tightens the timer toward the observed cycle. It only
-ever shrinks, and gaps that span a zone or instance change never count.
+</details>
 
-## Settings window
+<details>
+<summary>⚙️ <b>Configuration</b> (you probably never need this)</summary>
 
-| tab | what's there |
-|---|---|
-| **Status** | log file + character/server, zone, level, spells tracked, active bars |
-| **Rares** | the respawn database + recent-kills quick add |
-| **Spells** | everything you've landed this session, with live durations |
-| **Setup** | game folder, command channel, config location |
-
-## Configuration
-
-`config.toml` is generated on first run and rewritten by the settings window;
-you rarely need to touch it. The interesting keys:
+A `config.toml` is generated on first run and managed by the settings window — game folder, command channel, sounds, overlay position:
 
 ```toml
 [general]
 log_dir = 'C:\...\EverQuest Legends\Logs'   # newest eqlog_*.txt is followed
-icon_dir = 'C:\...\uifiles\default'          # SpellsNN.tga icon sheets
-player_level = 24                            # fallback; auto-updates from dings
-command_channel = "eqov"                     # in-game command channel
-# log_path = '...'                           # pin one specific log instead
-# rare_db = 'rares.toml'                     # shareable respawn DB
+command_channel = "eqov"                     # your in-game command channel
 
 [overlay]
 x = 20
@@ -132,61 +88,27 @@ width = 340
 height = 480
 ```
 
-See `config.example.toml` for the fully annotated version, including custom
-`[[triggers]]` (regex → sound alerts / fixed timers) if you want extras.
+`config.example.toml` documents every key, including custom regex triggers with sound alerts if you want to go full GINA.
 
-## Building from source
+</details>
 
-Windows only — the transparent click-through window requires the wgpu /
-DirectComposition backend (OpenGL cannot composite it; it renders invisible).
+<details>
+<summary>🆘 <b>Troubleshooting</b></summary>
 
-Prereqs: [rustup](https://rustup.rs) plus the Microsoft C++ Build Tools
-(`winget install Microsoft.VisualStudio.2022.BuildTools`).
+- **No bars?** Settings → Status: is it tailing the right character's log? Is `/log on`? EQ must be **borderless windowed** — nothing can draw over exclusive fullscreen.
+- **A mez bar flashed and vanished** — the mez broke or didn't stick. The overlay agrees with the log; believe it.
+- **New spell rank runs short?** Durations self-correct after the first clean, unbroken wear-off (mote ranks aren't in the game's data files).
+- **Windows refuses to run it at all** — that's Smart App Control. Build from source (above).
 
-```powershell
-cargo build --release -p eq-overlay-gui
-```
+</details>
 
-Run the exe with the repo root as the working directory (that's where
-`config.example.toml` and `rares.toml` are found), or ship it in a folder with
-those files. If you build under OneDrive, point builds elsewhere first:
-`setx CARGO_TARGET_DIR C:\rust-build\eq-overlay` (new shell after).
+<details>
+<summary>🔍 <b>What it's doing under the hood</b></summary>
 
-### Workspace layout
+Tails the newest `eqlog_*.txt` (event-driven, ~instant), parses every line, and follows through on your casts: `You begin casting X.` arms the spell's land message from `spells_us.txt`, the land starts a level-scaled bar, wear-off/break/death lines clear it. Same-named mobs share a counted bar (`x2`). Kill lines start respawn countdowns; camped kill-gaps tighten them; zoning wipes everything (fresh instances spawn rares up). It's the GINA model with the trigger-writing automated away — and like GINA, it's log-file-only, which most emu servers explicitly allow. Check your server's policy if unsure.
 
-```
-crates/
-├─ eq-core/         # engine: tailer, parser, spell DB, triggers, pipeline
-├─ eq-cli/          # `eqoverlay` — tail/gen CLI for testing without the game
-└─ eq-overlay-gui/  # the tray app + overlay + settings window
-```
+</details>
 
-### Try it without EverQuest
+---
 
-```powershell
-# Terminal A - fake log lines:
-cargo run -p eq-cli -- gen --log test.log --interval-ms 1200
-
-# Terminal B - tail and match:
-cargo run -p eq-cli -- tail --config config.example.toml --log test.log --no-audio
-```
-
-`cargo test` runs the full suite (parser, tailer, spell DB, calibration, and
-the in-game command grammar).
-
-## Troubleshooting
-
-- **No bars?** Check the Status tab: right character's log? Logging on
-  (`/log on`)? Run EQ in **borderless windowed** — nothing can draw over
-  exclusive fullscreen.
-- **A mez bar flashed and vanished** — the mez broke or didn't stick; the log
-  said so and the overlay agreed. Believe the overlay.
-- **New spell rank seems short?** Rank durations are learned from the first
-  clean, unbroken wear-off; until then the bar errs short (the safe direction
-  for crowd control).
-- **Smart App Control** (rare): SAC-enforced Windows refuses unsigned exes
-  entirely — build from source in that case.
-
-## License
-
-MIT — see [LICENSE](LICENSE).
+<p align="center">MIT licensed · built with Rust + egui · interface lovingly borrowed from BeOS R5</p>
