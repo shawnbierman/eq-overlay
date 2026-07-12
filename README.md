@@ -12,6 +12,8 @@
 No memory reading, no packet sniffing, no injection, no automation —<br/>
 it just reads files the game writes to disk (your log + the client's spell data).</p>
 
+<p align="center"><img src="docs/screenshot.png" width="520" alt="In game: the zone tab, three debuff bars with real spell icons, and a rare respawn clock counting down"></p>
+
 **Jump to:** [Setup](#setup) · [What you get](#what-you-get) · [In-game commands](#in-game-commands) · [Build it yourself](#-building-from-source) · [Help](#-troubleshooting)
 
 ## Setup
