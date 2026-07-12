@@ -20,9 +20,10 @@ it just reads files the game writes to disk (your log + the client's spell data)
 
 1. **[Download the zip](https://github.com/shawnbierman/eq-overlay/releases)** and unzip it anywhere (Desktop is fine).
 2. **Run `eq-overlay-gui.exe`.** Windows will say "unknown publisher" the first time → **More info → Run anyway**.
-3. In game: **`/log on`**, and play in **windowed mode** — press **Alt+Enter** to
-   toggle it (or EQ Options → Display → Windowed). Any windowed mode works;
-   only exclusive fullscreen can hide an overlay.
+3. In game: **`/log on`**, and play in **windowed mode**: EQ Options →
+   **System → Display** → click **"Switch to Windowed"**. (If the button
+   already says "Switch to Fullscreen", you're set.) Overlays can't draw over
+   fullscreen mode.
 
 Done. It finds your EQ install by itself and lives in the system tray (🕐 yellow icon = settings). No config files, no triggers to write.
 
@@ -100,7 +101,7 @@ height = 480
 <details>
 <summary>🆘 <b>Troubleshooting</b></summary>
 
-- **No bars?** Settings → Status: is it tailing the right character's log? Is `/log on`? EQ must be **windowed** (Alt+Enter toggles it) — nothing can draw over exclusive fullscreen.
+- **No bars?** Settings → Status: is it tailing the right character's log? Is `/log on`? EQ must be **windowed** (Options → System → Display → "Switch to Windowed") — nothing can draw over fullscreen.
 - **A mez bar flashed and vanished** — the mez broke or didn't stick. The overlay agrees with the log; believe it.
 - **New spell rank runs short?** Durations self-correct after the first clean, unbroken wear-off (mote ranks aren't in the game's data files).
 - **Windows refuses to run it at all** — that's Smart App Control. Build from source (above).
