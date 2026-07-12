@@ -9,7 +9,8 @@
 </p>
 
 <p align="center"><b>Spell timers and rare-respawn tracking, drawn right over the game.</b><br/>
-Reads your log file only — no injection, no automation, nothing to configure.</p>
+No memory reading, no packet sniffing, no injection, no automation —<br/>
+it just reads files the game writes to disk (your log + the client's spell data).</p>
 
 **Jump to:** [Setup](#setup) · [What you get](#what-you-get) · [In-game commands](#in-game-commands) · [Build it yourself](#-building-from-source) · [Help](#-troubleshooting)
 
@@ -105,7 +106,9 @@ height = 480
 <details>
 <summary>🔍 <b>What it's doing under the hood</b></summary>
 
-Tails the newest `eqlog_*.txt` (event-driven, ~instant), parses every line, and follows through on your casts: `You begin casting X.` arms the spell's land message from `spells_us.txt`, the land starts a level-scaled bar, wear-off/break/death lines clear it. Same-named mobs share a counted bar (`x2`). Kill lines start respawn countdowns; camped kill-gaps tighten them; zoning wipes everything (fresh instances spawn rares up). It's the GINA model with the trigger-writing automated away — and like GINA, it's log-file-only, which most emu servers explicitly allow. Check your server's policy if unsure.
+Tails the newest `eqlog_*.txt` (event-driven, ~instant), parses every line, and follows through on your casts: `You begin casting X.` arms the spell's land message from `spells_us.txt`, the land starts a level-scaled bar, wear-off/break/death lines clear it. Same-named mobs share a counted bar (`x2`). Kill lines start respawn countdowns; camped kill-gaps tighten them; zoning wipes everything (fresh instances spawn rares up). It's the GINA model with the trigger-writing automated away.
+
+To be precise about what it touches: it **reads** your log and the client's data files (`spells_us.txt`, `spells_us_str.txt`, the spell-icon sheets) and **writes** its own two files (`config.toml`, `rares.toml`). It never reads game memory, never touches the network, never sends input to the game — the same passive class as GINA, which most emu servers explicitly allow. Check your server's policy if unsure.
 
 </details>
 

@@ -1212,7 +1212,7 @@ impl OverlayApp {
         ui.add_space(4.0);
         egui::Grid::new("eqov-about").num_columns(2).spacing([16.0, 5.0]).show(ui, |ui| {
             ui.colored_label(dim, "How it works");
-            ui.label("reads your log file only — no injection, no automation");
+            ui.label("reads the game's files on disk (log + spell data) — never memory, packets, or input");
             ui.end_row();
             ui.colored_label(dim, "Built with");
             ui.label("Rust, egui + wgpu");
