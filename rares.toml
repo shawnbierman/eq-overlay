@@ -1,0 +1,47 @@
+# Shareable rare / named respawn database — EverQuest Legends.
+#
+# Community-editable: copy, merge, and share this file. The overlay loads it
+# automatically (it sits next to the config; override the path with
+# `[general] rare_db`). Your personal `[[rare]]` entries in the config win over
+# anything here with the same name.
+#
+# Each entry:
+#   name             exact mob name, as in "You have slain X!" / "X has been slain by"
+#   respawn_seconds  death -> next spawn (for placeholder mobs, treat as EARLIEST pop)
+#   zone             informational
+#   icon             optional spell-icon index; a colour square is used otherwise
+#   notes            optional
+#
+# Respawns here were learned from kill-timestamp gaps in a real log (minimum
+# gap during a camped session ≈ the respawn cycle). Refine as you gather data.
+
+[[rare]]
+name = "Priest Amiaz"
+zone = "Befallen"
+respawn_seconds = 450
+notes = "~7.5 min (min gap 7:24); scatter suggests placeholder-based, so ~earliest pop"
+
+[[rare]]
+name = "Baron Telyx V`Zher"
+zone = "Befallen"
+respawn_seconds = 265
+notes = "~4:25; min camped kill-to-kill gap 4:43 minus ~15s observed in-game (gap includes engage+kill time)"
+
+[[rare]]
+name = "Soldier of V`Zher"
+zone = "Befallen"
+respawn_seconds = 265
+notes = "~4:25; shares the Baron's cycle (V`Zher family); calibrated -15s from in-game observation"
+
+
+[[rare]]
+name = "Korven Nisere"
+zone = "Befallen 4 (Refined)"
+respawn_seconds = 275
+notes = "added in-game 2026-07-12"
+
+[[rare]]
+name = "Knight V`Tal"
+zone = "Befallen 4 (Refined)"
+respawn_seconds = 300
+notes = "added in-game 2026-07-12"

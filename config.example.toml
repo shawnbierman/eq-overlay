@@ -1,0 +1,49 @@
+# EQ overlay config.
+#
+# Debuff tracking is AUTOMATIC. The pipeline reads EQ's spells_us.txt +
+# spells_us_str.txt (found next to icon_dir) and follows through on every spell
+# you cast: it sees "You begin casting <Spell>.", looks the spell up, and when it
+# lands starts a bar using the file's land message, level-scaled duration, and
+# icon. A "Your <Spell> spell has worn off of <target>." line clears it, and a
+# kill clears every bar on that mob. No per-spell list to maintain.
+
+[general]
+# The overlay tails ONE log. Priority: --log flag > log_path > newest eqlog in
+# log_dir. With log_dir set it auto-follows whichever character/server you last
+# played (Rivervale, Qeynos, …) — no need to edit anything when you switch.
+log_dir = 'C:\Users\Public\Daybreak Game Company\Installed Games\EverQuest Legends\Logs'
+# log_path = 'C:\...\Logs\eqlog_YourToon_server.txt'   # pin one specific log instead
+player_level = 11
+# Folder with EQ's SpellsNN.tga icon sheets. The spell DB is found two levels up
+# from here (…\EverQuest Legends\spells_us.txt); override with spell_file below.
+icon_dir = 'C:\Users\Public\Daybreak Game Company\Installed Games\EverQuest Legends\uifiles\default'
+icon_sheet = "Spells"
+# spell_file = 'C:\...\EverQuest Legends\spells_us.txt'
+# spell_str_file = 'C:\...\EverQuest Legends\spells_us_str.txt'
+# rare_db = 'rares.toml'   # shareable rare-respawn DB (default: rares.toml next to this file)
+
+[overlay]
+x = 20
+y = 95
+width = 340
+height = 480
+
+
+# Death-clearing is BUILT IN: when a mob is slain (by anyone), every bar on it
+# — and on its silently-despawning pet — is removed automatically. No triggers
+# needed for that.
+
+
+# ─── Rare / named respawn timers ────────────────────────────────────────────
+# Rares live in the shareable DB `rares.toml` (loaded automatically from next to
+# this file) — see rare_db above. When one is slain (by you or anyone) a gold bar
+# counts down its respawn; at 0 it turns green and reads "UP". You can still add a
+# personal [[rare]] here — it overrides the DB entry of the same name.
+
+
+# ─── Custom triggers still work here if you want them (sound alerts, fixed
+#     timers, etc.). Example:
+# [[triggers]]
+# name = "Charm break!"
+# pattern = 'Your charm spell has worn off.'
+# sound = 'sounds/alarm.wav'

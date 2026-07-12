@@ -1,0 +1,30 @@
+[package]
+name = "eq-overlay-gui"
+description = "Transparent click-through timer overlay for the EQ engine"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "eq-overlay-gui"
+path = "src/main.rs"
+
+[dependencies]
+eq-core = { path = "../eq-core" }
+anyhow.workspace = true
+clap.workspace = true
+# Surfaces eframe/winit/glutin's internal `log` messages so window/GL failures
+# aren't silent. Controlled by RUST_LOG.
+env_logger = "0.11"
+log = "0.4"
+# egui + native window/loop. Use the wgpu backend (DX12 + DirectComposition on
+# Windows): OpenGL/glow does NOT composite a transparent, layered, click-through
+# window — it renders invisible. wgpu/DComp is the correct path for a game overlay.
+eframe = { version = "0.29", default-features = false, features = ["wgpu", "default_fonts"] }
+# Decode EQ's SpellsNN.tga icon sheets. TGA only, to keep the build lean.
+image = { version = "0.25", default-features = false, features = ["tga"] }
+# System tray icon + menu (Settings / Quit). The overlay window is click-through
+# and there is no console, so the tray is the app's only control surface.
+tray-icon = "0.21"
+# Native folder picker for the settings window.
+rfd = "0.15"

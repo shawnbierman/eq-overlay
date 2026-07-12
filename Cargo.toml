@@ -1,0 +1,34 @@
+# Workspace root. The testable core lives in `crates/eq-core`; the CLI that
+# drives it lives in `crates/eq-cli`. A future `crates/eq-overlay-gui` can be
+# added as a third member that consumes EngineEvents over an mpsc channel.
+[workspace]
+resolver = "2"
+members = ["crates/eq-core", "crates/eq-cli", "crates/eq-overlay-gui"]
+# Keep the everyday `cargo build` / `cargo test` fast (core + CLI only). The GUI
+# pulls a large graphics stack, so it's built explicitly when you want it:
+#   cargo run -p eq-overlay-gui -- --config config.example.toml --log test.log
+default-members = ["crates/eq-core", "crates/eq-cli"]
+
+[workspace.package]
+edition = "2021"
+version = "0.1.0"
+license = "MIT OR Apache-2.0"
+
+# Versions are pinned once here and referenced with `dep.workspace = true`
+# from each crate, so the whole workspace stays on one set of versions.
+[workspace.dependencies]
+anyhow = "1"
+chrono = "0.4"
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+notify = "6"
+aho-corasick = "1"
+regex = "1"
+rodio = "0.19"
+clap = { version = "4", features = ["derive"] }
+tempfile = "3"
+
+# Faster incremental dev builds; the tailer/overlay are latency-sensitive at
+# runtime but not CPU-bound, so this is purely a build-time convenience.
+[profile.dev]
+opt-level = 1

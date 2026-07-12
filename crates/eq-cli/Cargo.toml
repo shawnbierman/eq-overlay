@@ -1,0 +1,16 @@
+[package]
+name = "eq-cli"
+description = "CLI driver for the EverQuest overlay core engine"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "eqoverlay"
+path = "src/main.rs"
+
+[dependencies]
+eq-core = { path = "../eq-core" }
+anyhow.workspace = true
+chrono.workspace = true
+clap.workspace = true
