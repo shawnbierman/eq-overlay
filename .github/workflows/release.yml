@@ -1,0 +1,30 @@
+# Tag a version (git tag v0.1.0 && git push origin v0.1.0) and this builds the
+# release zip and publishes it on the GitHub Releases page automatically.
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build
+        run: cargo build --release -p eq-overlay-gui
+      - name: Package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory dist | Out-Null
+          Copy-Item target/release/eq-overlay-gui.exe dist/
+          Copy-Item config.example.toml, rares.toml, README.md dist/
+          Compress-Archive -Path dist/* -DestinationPath "eq-overlay-${{ github.ref_name }}.zip"
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: eq-overlay-*.zip
+          generate_release_notes: true
