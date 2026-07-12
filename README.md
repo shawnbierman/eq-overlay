@@ -52,7 +52,7 @@ Once per login: `/autojoin eqov` — then, right after killing a named:
 |---|---|
 | `add` | track the last mob you killed (5:00 guess) |
 | `add 4:25` | …with the real respawn time |
-| `add 4:25 Baron Telyx V`Zher` | …by name — **shares to everyone in the channel** |
+| ``add 4:25 Baron Telyx V`Zher`` | …by name — **shares to everyone in the channel** |
 | `remove` | undo the last add |
 
 💡 Put `/1 add` in a **social macro** — one hotbar button, no typing. Or skip all of this and use the **Rares tab** in the settings window: recent kills, one-click add.
