@@ -17,6 +17,19 @@ It reads the log file only — no memory reading, no injection, no automation.
 Same class of tool as GINA or nparse. (Check your server's third-party-tool
 policy if you're unsure.)
 
+## Contents
+
+- [Quick start](#quick-start)
+- [The overlay](#the-overlay)
+- [Rares: the shared database](#rares-the-shared-database)
+- [Settings window](#settings-window)
+- [Configuration](#configuration)
+- [Building from source](#building-from-source)
+  - [Workspace layout](#workspace-layout)
+  - [Try it without EverQuest](#try-it-without-everquest)
+- [Troubleshooting](#troubleshooting)
+- [License](#license)
+
 ## Quick start
 
 1. Grab the latest release zip and unpack it anywhere (keep the files
