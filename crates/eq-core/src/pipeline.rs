@@ -134,8 +134,16 @@ pub fn spawn_pipeline_with_control(
     let spells_tracked = spell_db.as_ref().map(|d| d.len());
     let rares_tracked = rares.len();
     let rare_db_path = config.rare_db_path.clone();
-    let cmd_channel =
-        config.general.command_channel.clone().unwrap_or_else(|| "eqov".to_string());
+    // The command channel defaults to YOUR character name — a channel you join
+    // alone, so your `remember`/`forget` lines are private and only you can
+    // produce them. An explicit `[general] command_channel` overrides it.
+    let cmd_channel = config
+        .general
+        .command_channel
+        .clone()
+        .filter(|c| !c.trim().is_empty())
+        .or_else(|| crate::config::char_server_from_log(&log_path).map(|(ch, _)| ch))
+        .unwrap_or_else(|| "eqov".to_string());
     let zone_respawn = config.zone_respawn.clone();
     let join = thread::spawn(move || {
         run(
@@ -250,21 +258,21 @@ fn run(
     let slain_you_re = Regex::new(r"^You have slain (.+?)!").expect("slain regex");
     let slain_by_re = Regex::new(r"^(.+?) has been slain by ").expect("slain-by regex");
     let mut last_slain: Option<String> = None;
-    // Most recent in-game `add` (own or remote) — what a bare `remove` undoes.
+    // Most recent in-game `remember` — what a bare `forget` undoes.
     let mut last_added: Option<String> = None;
     // Last kill time per tracked rare, for respawn auto-calibration. Cleared
     // on every zone-in: a fresh zone/instance spawns rares up, so a cross-zone
     // "gap" says nothing about the respawn cycle.
     let mut rare_kill_at: HashMap<String, Instant> = HashMap::new();
 
-    // In-game commands via a chat channel: `add [m:ss|secs] [mob name]`
-    // registers a rare. Your own bare `add` uses the LAST MOB SLAIN ("kill it,
-    // type add"). The default channel (eqov) is community-shared: OTHER
-    // members' adds are honored too — but only with an explicit mob name
-    // (their "last kill" isn't in your log) — so named adds sync the rare DB
-    // across everyone in the channel.
+    // In-game commands, YOUR OWN channel line only: `remember [m:ss|secs] [mob]`
+    // registers a rare, `forget [mob]` drops it. A bare `remember` uses the LAST
+    // MOB SLAIN ("kill it, hit the key"); with `%T` it names your target. Only
+    // lines you personally send (`You tell <channel>:N, '...'`) are honored —
+    // other players' channel messages are ignored, so the list stays private and
+    // unspoofable. Join a channel named after yourself (add a password to lock
+    // it): `/join Yaro:secret`, then bind a hotkey to `/5 remember %T`.
     let chan_cmd_re = channel_cmd_regex(&cmd_channel);
-    let chan_other_re = channel_cmd_other_regex(&cmd_channel);
 
     // Auto-learned durations (spell -> max observed seconds), and the land time
     // of each active keyed effect so we can measure land->wear-off.
@@ -550,42 +558,30 @@ fn run(
                 }
             }
 
-            // --- in-game "add rare" command (own message, or another channel
-            //     member's — the shared-database case) ---
-            let cmd = chan_cmd_re
-                .captures(&parsed.message)
-                .map(|c| (None, c[1].trim().to_string()))
-                .or_else(|| {
-                    chan_other_re
-                        .captures(&parsed.message)
-                        .map(|c| (Some(c[1].to_string()), c[2].trim().to_string()))
-                });
-            if let Some((sender, cmd)) = cmd {
-                if let Some(rest) = cmd.strip_prefix("add").filter(|r| r.is_empty() || r.starts_with(' ')) {
-                    let (given, explicit_name) = parse_add(rest.trim());
+            // --- in-game commands (YOUR OWN channel line only) ---
+            if let Some(cmd) =
+                chan_cmd_re.captures(&parsed.message).map(|c| c[1].trim().to_string())
+            {
+                if let Some(rest) = strip_verb(&cmd, &["remember", "add"]) {
+                    let (given, explicit_name) = parse_add(rest);
                     let secs = given
                         .or_else(|| zone_default(&zone_respawn, current_zone.as_deref()))
                         .unwrap_or(300);
-                    // A remote bare `add` refers to THEIR last kill — which we
-                    // can't see — so remote adds need an explicit name.
-                    let name = match &sender {
-                        None => explicit_name.or_else(|| last_slain.clone()),
-                        Some(_) => explicit_name,
-                    };
+                    // Bare `remember` = the last mob you killed; a name (usually
+                    // %T) remembers that one. Corpse/empty/%T names are dropped.
+                    let name = explicit_name
+                        .or_else(|| last_slain.clone())
+                        .and_then(|n| clean_target_name(&n));
                     if let Some(name) = name {
                         last_added = Some(name.clone());
-                        // Zone is only trustworthy for our own adds; the mob
-                        // was (typically) just killed, so start the bar now.
-                        let zone =
-                            if sender.is_none() { current_zone.clone() } else { None };
                         if do_add(
                             &mut rares,
                             &rare_db_path,
                             &events_tx,
                             &name,
                             secs,
-                            zone,
-                            sender.as_deref(),
+                            current_zone.clone(),
+                            None,
                             Instant::now(),
                         )
                         .is_none()
@@ -593,20 +589,13 @@ fn run(
                             return Ok(());
                         }
                     }
-                } else if let Some(rest) =
-                    cmd.strip_prefix("remove").filter(|r| r.is_empty() || r.starts_with(' '))
-                {
-                    let rest = rest.trim();
-                    // Bare `remove` (own only) undoes the most recent add —
-                    // or drops the last mob slain. Remote removes need a name,
-                    // same rule as remote adds.
+                } else if let Some(rest) = strip_verb(&cmd, &["forget", "remove"]) {
+                    // Bare `forget` undoes your last remember (else drops the
+                    // last mob slain); a name (usually %T) forgets that one.
                     let name = if rest.is_empty() {
-                        match &sender {
-                            None => last_added.clone().or_else(|| last_slain.clone()),
-                            Some(_) => None,
-                        }
+                        last_added.clone().or_else(|| last_slain.clone())
                     } else {
-                        Some(rest.to_string())
+                        clean_target_name(rest)
                     };
                     if let Some(name) = name {
                         match do_remove(&mut rares, &rare_db_path, &events_tx, &name) {
@@ -622,39 +611,30 @@ fn run(
                             Some(false) => {}
                         }
                     }
-                } else if let Some(rest) =
-                    cmd.strip_prefix("zone").filter(|r| r.is_empty() || r.starts_with(' '))
-                {
-                    // `zone 9:30` — set the CURRENT zone's default respawn
-                    // (what a bare `add` uses here); `zone clear` removes it.
-                    // Own messages only: your zone is yours.
-                    if sender.is_none() {
-                        if let Some(z) = current_zone.as_deref().map(normalize_zone) {
-                            let rest = rest.trim();
-                            let new = if rest.eq_ignore_ascii_case("clear") {
-                                zone_respawn.remove(&z);
-                                Some(None)
-                            } else {
-                                parse_secs(rest).map(|s| {
-                                    zone_respawn.insert(z.clone(), s);
-                                    Some(s)
-                                })
-                            };
-                            if let Some(secs) = new {
-                                if let Some(p) = &rare_db_path {
-                                    upsert_zone_respawn_in_file(p, &z, secs);
-                                }
-                                if send(
-                                    &events_tx,
-                                    EngineEvent::ZoneDefaultSet {
-                                        zone: z,
-                                        respawn_seconds: secs,
-                                    },
-                                )
-                                .is_none()
-                                {
-                                    return Ok(());
-                                }
+                } else if let Some(rest) = strip_verb(&cmd, &["zone"]) {
+                    // `zone 9:30` — set the CURRENT zone's default respawn (what
+                    // a bare `remember` uses here); `zone clear` removes it.
+                    if let Some(z) = current_zone.as_deref().map(normalize_zone) {
+                        let new = if rest.eq_ignore_ascii_case("clear") {
+                            zone_respawn.remove(&z);
+                            Some(None)
+                        } else {
+                            parse_secs(rest).map(|s| {
+                                zone_respawn.insert(z.clone(), s);
+                                Some(s)
+                            })
+                        };
+                        if let Some(secs) = new {
+                            if let Some(p) = &rare_db_path {
+                                upsert_zone_respawn_in_file(p, &z, secs);
+                            }
+                            if send(
+                                &events_tx,
+                                EngineEvent::ZoneDefaultSet { zone: z, respawn_seconds: secs },
+                            )
+                            .is_none()
+                            {
+                                return Ok(());
                             }
                         }
                     }
@@ -784,24 +764,43 @@ fn send(tx: &Sender<EngineEvent>, ev: EngineEvent) -> Option<()> {
 }
 
 /// Regex matching the player's OWN sends to the command channel:
-/// `You tell <channel>:<n>, '<command>'`. Case-insensitive on the channel
-/// name; incoming messages read "<Name> tells …" so others can't spoof it.
+/// `You tell <channel>:<n>, '<command>'`. Case-insensitive on the channel name.
+/// Only YOUR sends produce a "You tell …" line in your log — other players read
+/// "<Name> tells …", which this never matches, so the command list is private
+/// and unspoofable. (There is deliberately no "other members" variant: the DB
+/// is not shared over the channel.)
 fn channel_cmd_regex(channel: &str) -> Regex {
     Regex::new(&format!(r"^You tell (?i:{})\S*, '(.+)'$", regex::escape(channel)))
         .expect("valid channel command regex")
 }
 
-/// Regex matching OTHER members' sends to the command channel:
-/// `<Name> tells <channel>:<n>, '<command>'` — the shared-database path.
-fn channel_cmd_other_regex(channel: &str) -> Regex {
-    Regex::new(&format!(r"^(\w+) tells (?i:{})\S*, '(.+)'$", regex::escape(channel)))
-        .expect("valid channel command regex")
+/// If `cmd` starts with any of `verbs` followed by end-of-string or a space,
+/// return the remainder (trimmed). The trailing check stops `add` from matching
+/// `adder` and lets `remember`/`add` (and `forget`/`remove`) share one branch.
+fn strip_verb<'a>(cmd: &'a str, verbs: &[&str]) -> Option<&'a str> {
+    verbs.iter().find_map(|v| {
+        cmd.strip_prefix(v).filter(|r| r.is_empty() || r.starts_with(' ')).map(str::trim)
+    })
 }
 
-/// Grammar of `add`: the time may come before OR after the name — people type
-/// both `add 9:30 a frenzied ghoul` and `add a frenzied ghoul 9:30`. Returns
-/// (explicit secs, explicit name); a missing time falls back to the zone
-/// default, then 5:00.
+/// Clean a `%T`-derived target name: strip a targeted-corpse suffix so firing
+/// the key just after a kill still resolves to the living mob, and reject the
+/// empty / literal-`%T` cases (macro fired with no target). Ordinary names pass
+/// through unchanged.
+fn clean_target_name(name: &str) -> Option<String> {
+    let n = name.trim();
+    let n = n
+        .strip_suffix("'s corpse")
+        .or_else(|| n.strip_suffix("`s corpse"))
+        .unwrap_or(n)
+        .trim();
+    (!n.is_empty() && !n.eq_ignore_ascii_case("%t")).then(|| n.to_string())
+}
+
+/// Grammar of `remember`/`add`: the time may come before OR after the name —
+/// people type both `remember 9:30 a frenzied ghoul` and
+/// `remember a frenzied ghoul 9:30`. Returns (explicit secs, explicit name); a
+/// missing time falls back to the zone default, then 5:00.
 fn parse_add(rest: &str) -> (Option<u64>, Option<String>) {
     if rest.is_empty() {
         return (None, None);
@@ -1053,12 +1052,11 @@ pub fn parse_secs(s: &str) -> Option<u64> {
     }
 }
 
-/// Escape a string for a TOML basic (double-quoted) value. Mob names and the
-/// credited sender arrive from the in-game command channel, which is UNTRUSTED
-/// and community-shared (anyone on the server can `/join eqov`). Writing a raw
-/// `"` would break out of the string and corrupt `rares.toml` — an invalid file
-/// then fails the whole config load on the next launch. Escape `\` and `"` and
-/// drop control characters so hostile input can only ever be an inert value.
+/// Escape a string for a TOML basic (double-quoted) value. Mob names come from
+/// the log / your target (`%T`) and `rares.toml` is shareable, hand-editable
+/// text, so a name could contain a `"` — which would break out of the string
+/// and corrupt the file, failing the whole config load on the next launch.
+/// Escape `\` and `"` and drop control characters so any name is an inert value.
 fn toml_escape(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for c in s.chars() {
@@ -1227,28 +1225,33 @@ mod tests {
     }
 
     #[test]
-    fn parses_in_game_add_command_pieces() {
-        let re = super::channel_cmd_regex("eqov");
-        // Own messages to the private channel match; channel number varies.
-        assert_eq!(&re.captures("You tell eqov:3, 'add 4:25'").unwrap()[1], "add 4:25");
-        assert_eq!(&re.captures("You tell Eqov:1, 'add'").unwrap()[1], "add");
-        // Other channels and other people's messages don't.
-        assert!(re.captures("You tell NewPlayers:1, 'add 4:25'").is_none());
-        assert!(re.captures("Gruffy tells eqov:3, 'add 4:25'").is_none());
-        // A custom channel name is honored (and the default no longer matches).
-        let re = super::channel_cmd_regex("shawnsecret");
-        assert_eq!(&re.captures("You tell ShawnSecret:4, 'add'").unwrap()[1], "add");
-        assert!(re.captures("You tell eqov:3, 'add'").is_none());
+    fn parses_in_game_command_pieces() {
+        // The channel defaults to your character name; only YOUR sends match.
+        let re = super::channel_cmd_regex("Yaro");
+        assert_eq!(&re.captures("You tell Yaro:3, 'remember 4:25'").unwrap()[1], "remember 4:25");
+        assert_eq!(&re.captures("You tell yaro:1, 'forget'").unwrap()[1], "forget");
+        // Other channels, and — crucially — other people's messages, never match:
+        // the list is private and can't be driven by anyone else.
+        assert!(re.captures("You tell General:1, 'remember 4:25'").is_none());
+        assert!(re.captures("Gruffy tells Yaro:3, 'remember 4:25 a ghoul'").is_none());
+        assert!(re.captures("Griefer tells Yaro:1, 'forget a frenzied ghoul'").is_none());
 
-        // Other channel members' adds (shared DB): sender + command captured.
-        let re = super::channel_cmd_other_regex("eqov");
-        let c = re.captures("Gruffy tells eqov:3, 'add 4:25 Baron Telyx V`Zher'").unwrap();
-        assert_eq!(&c[1], "Gruffy");
-        assert_eq!(&c[2], "add 4:25 Baron Telyx V`Zher");
-        assert!(re.captures("You tell eqov:3, 'add'").is_none()); // own line not doubled
-        assert!(re.captures("Gruffy tells General:1, 'add'").is_none());
+        // Verb dispatch: remember/add and forget/remove are interchangeable, and
+        // the trailing-space rule stops `add` from eating `adder`.
+        assert_eq!(super::strip_verb("remember a frenzied ghoul", &["remember", "add"]), Some("a frenzied ghoul"));
+        assert_eq!(super::strip_verb("add 4:25", &["remember", "add"]), Some("4:25"));
+        assert_eq!(super::strip_verb("remember", &["remember", "add"]), Some(""));
+        assert_eq!(super::strip_verb("adder", &["remember", "add"]), None);
+        assert_eq!(super::strip_verb("forget", &["forget", "remove"]), Some(""));
+        assert_eq!(super::strip_verb("zap the mob", &["remember", "add"]), None);
 
-        // add grammar: (explicit secs, explicit name)
+        // %T hygiene: corpse suffix stripped; empty / literal %T rejected.
+        assert_eq!(super::clean_target_name("a dar ghoul knight"), Some("a dar ghoul knight".into()));
+        assert_eq!(super::clean_target_name("a dar ghoul knight's corpse"), Some("a dar ghoul knight".into()));
+        assert_eq!(super::clean_target_name("%T"), None);
+        assert_eq!(super::clean_target_name("   "), None);
+
+        // remember/forget grammar: (explicit secs, explicit name)
         assert_eq!(super::parse_add(""), (None, None));
         assert_eq!(super::parse_add("4:25"), (Some(265), None));
         assert_eq!(
@@ -1277,10 +1280,10 @@ mod tests {
     }
 
     #[test]
-    fn hostile_channel_name_cannot_corrupt_the_rare_db() {
-        // A griefer in the shared `eqov` channel sends a mob name laced with
-        // TOML-breaking characters. It must land as an INERT string value, and
-        // the file must still parse afterward — never a broken config load.
+    fn hostile_name_cannot_corrupt_the_rare_db() {
+        // A mob name laced with TOML-breaking characters (from a shared rares
+        // file, a hand-edit, or odd log text) must land as an INERT string
+        // value, and the file must still parse afterward — never a broken load.
         use std::collections::HashMap;
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("rares.toml");

@@ -74,7 +74,9 @@ fn main() -> Result<()> {
                 game: &game,
                 overlay: (20, 95, 340, 480),
                 player_level: 1,
-                command_channel: "eqov",
+                // Empty → the pipeline defaults the command channel to your
+                // character name (a private channel you join alone).
+                command_channel: "",
                 audio_enabled: true,
                 spawn_sound: "default",
                 auto_update: true,
@@ -126,7 +128,7 @@ fn main() -> Result<()> {
             height: 32,
         }),
         rares: Vec::new(),
-        command_channel: "eqov".to_string(),
+        command_channel: String::new(), // set to the character name once the log is known
         audio_enabled: true,
         spawn_sound: "default".to_string(),
         zone_respawn: Default::default(),
@@ -155,6 +157,15 @@ fn main() -> Result<()> {
 
         if let Some(log_path) = cfg.resolve_log_path(cli.log.clone()) {
             info.char_server = char_server_from_log(&log_path);
+            // With no channel pinned in the config, it defaults to your
+            // character name (matching the pipeline) — show that in Settings.
+            let channel_unset =
+                cfg.general.command_channel.as_deref().map(str::trim).unwrap_or("").is_empty();
+            if channel_unset {
+                if let Some((ch, _)) = &info.char_server {
+                    info.command_channel = ch.clone();
+                }
+            }
             info.log_path = Some(log_path.clone());
             let opts = PipelineOptions {
                 from_beginning: cli.from_beginning,
@@ -297,8 +308,7 @@ pub(crate) fn write_config_file(path: &Path, s: &SavedSettings) -> std::io::Resu
          icon_dir = '{g}\\uifiles\\default'\n\
          icon_sheet = \"Spells\"\n\
          player_level = {level}\n\
-         command_channel = \"{channel}\"\n\
-         \n\
+         {channel_line}\
          [audio]\n\
          enabled = {audio}\n\
          spawn_sound = '{sound}'\n\
@@ -312,7 +322,13 @@ pub(crate) fn write_config_file(path: &Path, s: &SavedSettings) -> std::io::Resu
          width = {width}\n\
          height = {height}\n",
         level = s.player_level,
-        channel = s.command_channel,
+        // Omit the line entirely when empty, so the pipeline derives the channel
+        // from the character name instead of pinning a stale value.
+        channel_line = if s.command_channel.trim().is_empty() {
+            "\n".to_string()
+        } else {
+            format!("command_channel = \"{}\"\n\n", s.command_channel)
+        },
         audio = s.audio_enabled,
         sound = s.spawn_sound,
         auto = s.auto_update,

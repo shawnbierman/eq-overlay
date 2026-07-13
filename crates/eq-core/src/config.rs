@@ -147,10 +147,10 @@ pub struct General {
     /// character/server you last played (Rivervale, Qeynos, …) with no reconfig.
     #[serde(default)]
     pub log_dir: Option<String>,
-    /// Name of the private chat channel watched for in-game commands like
-    /// `add` (rare respawns). Join it in game with `/join <name>`. Pick a name
-    /// nobody else uses — channel members see each other's messages. Default
-    /// "eqov".
+    /// Name of the PRIVATE chat channel watched for in-game commands
+    /// (`remember`/`forget`). Only your own sends are read, so no one else can
+    /// change your list. Defaults to your character name when unset — join it
+    /// alone in game (`/join <name>`, optionally `:password`).
     #[serde(default)]
     pub command_channel: Option<String>,
 }

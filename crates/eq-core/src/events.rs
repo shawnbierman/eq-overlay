@@ -30,9 +30,9 @@ pub enum EngineEvent {
     /// Level-scaled durations use it internally; the settings window shows it.
     Level { level: u32 },
     /// A rare was added to the respawn database from in-game (the private
-    /// "eqov" channel `add` command). The settings window updates its list.
+    /// channel `remember` command). The settings window updates its list.
     RareAdded { name: String, respawn_seconds: u64, zone: Option<String> },
-    /// A rare was removed from the respawn database from in-game (`remove`).
+    /// A rare was removed from the respawn database from in-game (`forget`).
     RareRemoved { name: String },
     /// A rare's respawn time was auto-calibrated (tightened) from observed
     /// kill-to-kill gaps while camping it.

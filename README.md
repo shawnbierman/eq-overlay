@@ -30,8 +30,8 @@ Done. It finds your EQ install by itself and lives in the system tray (🕐 yell
 ## What you get
 
 - 🪄 **A bar for every debuff you land** — mez, slow, root, DoT… with the real spell icons and level-correct durations, straight from the game's own data. Bars **con like mobs**: green while safe, yellow when short, red when about to break. Cast it, see it. Zero setup.
-- ⏰ **Rare respawn timers** — kill a named, type `add`, and a countdown clock starts. It **chimes and flashes** when the rare is due, and respawn times calibrate themselves as you camp.
-- 🤝 **A shared database** — everyone in the `eqov` chat channel gets each other's named adds, live. The file (`rares.toml`) is plain text you can trade around too.
+- ⏰ **Rare respawn timers** — target a named, type `remember %T`, and a countdown clock starts. It **chimes and flashes** when the rare is due, and respawn times calibrate themselves as you camp.
+- 🤝 **A portable database** — your rares live in `rares.toml`, plain text you can hand to a friend or fold into the shared list that ships with each release. Commands are **private to you** — nobody else can edit your list.
 - 📊 **Zone + live DPS** in a little BeOS-style tab. The overlay never eats your mouse clicks.
 
 ## How it works
@@ -42,7 +42,7 @@ flowchart LR
     DATA["📜 the game's spell data"] --> APP
     APP --> BARS["⏳ timer bars over the game"]
     APP <--> DB[("rares.toml<br/>respawn database")]
-    APP <--> CHAT["💬 eqov channel<br/>(shared adds)"]
+    APP <--> CHAT["💬 your private channel<br/>(remember / forget)"]
 
     classDef gold fill:#ffcb00,stroke:#302606,color:#302606
     classDef dark fill:#181a1f,stroke:#666,color:#eee
@@ -52,17 +52,17 @@ flowchart LR
 
 ## In-game commands
 
-Once per login: `/autojoin eqov` — then, right after killing a named:
+Commands go through a channel **named after your character** — private to you, so no one else can touch your list. Join it once (a password locks it to you): `/join Yaro:secret`. Then **target a mob** and:
 
 | type | it does |
 |---|---|
-| `add` | track the last mob you killed (5:00 guess) |
-| `add 4:25` | …with the real respawn time |
-| ``add 4:25 Baron Telyx V`Zher`` | …by name — **shares to everyone in the channel** |
-| `remove` | undo the last add |
-| `zone 9:30` | set THIS zone's default respawn — bare `add`s here use it (`zone clear` unsets) |
+| `remember %T` | track your target (`%T` = its name) |
+| `remember 4:25 %T` | …with the real respawn time |
+| `forget %T` | stop tracking it |
+| `remember` | track the last mob you killed (no target needed) |
+| `zone 9:30` | set THIS zone's default respawn — bare `remember`s here use it (`zone clear` unsets) |
 
-💡 Put `/1 add` in a **social macro** — one hotbar button, no typing. Or skip all of this and use the **Rares tab** in the settings window: recent kills, one-click add.
+💡 Bind `/N remember %T` to a **hotkey** (N = your channel's number) — one press, no typing. Or skip all of this and use the **Rares tab** in the settings window: recent kills, one-click add.
 
 <details>
 <summary>🔧 <b>Building from source</b> (optional — for devs, or if Smart App Control blocks unsigned exes)</summary>
@@ -86,7 +86,7 @@ A `config.toml` is generated on first run and managed by the settings window —
 ```toml
 [general]
 log_dir = 'C:\...\EverQuest Legends\Logs'   # newest eqlog_*.txt is followed
-command_channel = "eqov"                     # your in-game command channel
+command_channel = "Yaro"                     # private; defaults to your character name
 
 [overlay]
 x = 20

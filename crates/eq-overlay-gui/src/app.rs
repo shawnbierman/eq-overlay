@@ -49,7 +49,8 @@ pub struct StartupInfo {
     pub window_icon: std::sync::Arc<egui::IconData>,
     /// The merged rare database (rares.toml + personal entries), for display.
     pub rares: Vec<eq_core::config::RareConfig>,
-    /// Private chat channel watched for in-game commands (default "eqov").
+    /// Private chat channel watched for in-game commands (defaults to the
+    /// character name; only your own sends are honored).
     pub command_channel: String,
     /// Master sound switch (config `[audio] enabled`, default true).
     pub audio_enabled: bool,
@@ -1153,11 +1154,15 @@ impl OverlayApp {
         ui.add_space(4.0);
         ui.label(
             RichText::new(format!(
-                "In game: /join {ch}, then  add  /  add 4:25  /  remove  after a kill — a social \
-                 macro with  /1 add  makes it one button.  zone 9:30  sets this zone's default \
-                 respawn (bare adds use it). Named adds sync to the whole channel; respawns \
-                 tighten automatically as you camp.",
-                ch = self.info.command_channel,
+                "In game: /join {ch} (your private channel), then target a mob and  remember %T  \
+                 —  or  remember 4:25 %T  for an exact time,  forget %T  to drop it. Bind  \
+                 /N remember %T  to a hotkey for one-press adds ({ch} is channel N).  zone 9:30  \
+                 sets this zone's default respawn. Respawns tighten automatically as you camp.",
+                ch = if self.info.command_channel.is_empty() {
+                    "<your name>"
+                } else {
+                    &self.info.command_channel
+                },
             ))
             .size(10.5)
             .color(dim),
@@ -1251,8 +1256,9 @@ impl OverlayApp {
         });
         ui.colored_label(
             dim,
-            "Where in-game commands are typed. The default (eqov) is community-shared — \
-             named adds from any member reach everyone. Use your own name for a private list.",
+            "Your PRIVATE command channel — defaults to your character name. Join it alone \
+             (add a password to lock it: /join name:password). Only your own messages here \
+             are read, so no one else can touch your list.",
         );
 
         ui.add_space(8.0);
@@ -1605,10 +1611,8 @@ impl OverlayApp {
         let Some(gd) = self.pending_game_dir.as_ref().or(self.info.game_dir.as_ref()) else {
             return;
         };
-        let chan = {
-            let t = self.channel_edit.trim();
-            if t.is_empty() { "eqov" } else { t }
-        };
+        // Empty stays empty: the pipeline then defaults to the character name.
+        let chan = self.channel_edit.trim();
         let s = crate::SavedSettings {
             game: gd,
             overlay: self.info.overlay,
