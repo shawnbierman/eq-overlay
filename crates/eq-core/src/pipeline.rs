@@ -53,6 +53,9 @@ pub enum Control {
     RemoveRare { name: String },
     /// Edit a tracked rare's respawn time in place (no new spawn bar).
     SetRespawn { name: String, respawn_seconds: u64 },
+    /// Switch the in-game command channel live (no restart needed) — the
+    /// Setup tab applies edits immediately.
+    SetChannel { name: String },
 }
 
 #[derive(Debug, Clone)]
@@ -271,8 +274,9 @@ fn run(
     // lines you personally send (`You tell <channel>:N, '...'`) are honored —
     // other players' channel messages are ignored, so the list stays private and
     // unspoofable. Join a channel named after yourself (add a password to lock
-    // it): `/join Yaro:secret`, then bind a hotkey to `/5 remember %T`.
-    let chan_cmd_re = channel_cmd_regex(&cmd_channel);
+    // it), then bind a hotkey to `/1 remember %T`. Mutable: the Setup tab can
+    // switch the channel live via Control::SetChannel.
+    let mut chan_cmd_re = channel_cmd_regex(&cmd_channel);
 
     // Auto-learned durations (spell -> max observed seconds), and the land time
     // of each active keyed effect so we can measure land->wear-off.
@@ -333,6 +337,12 @@ fn run(
                         {
                             return Ok(());
                         }
+                    }
+                }
+                Control::SetChannel { name } => {
+                    let t = name.trim();
+                    if !t.is_empty() {
+                        chan_cmd_re = channel_cmd_regex(t);
                     }
                 }
             }
@@ -830,9 +840,11 @@ fn zone_default(zone_respawn: &HashMap<String, u64>, zone: Option<&str>) -> Opti
     zone.map(normalize_zone).and_then(|z| zone_respawn.get(&z).copied())
 }
 
-/// Normalize a zone name so instances share one identity: drop a trailing
-/// parenthetical and a trailing instance number — "Befallen 4 (Refined)" and
-/// "Befallen 2 (Adaptive)" both become "Befallen".
+/// Normalize a zone name so every instance shares one identity: "Befallen 4
+/// (Refined)", "Befallen 2 (Adaptive)", and "Befallen 12-3" are all "Befallen".
+/// Rule: drop a trailing parenthetical (some instance decorations carry no
+/// number), then CUT AT THE FIRST DIGIT — no real zone has a digit in its
+/// name, so anything from the first digit on is instance decoration.
 pub fn normalize_zone(z: &str) -> String {
     let mut s = z.trim();
     if s.ends_with(')') {
@@ -840,12 +852,10 @@ pub fn normalize_zone(z: &str) -> String {
             s = &s[..i];
         }
     }
-    let s = s.trim_end();
-    let s = match s.rsplit_once(' ') {
-        Some((head, last)) if !last.is_empty() && last.chars().all(|c| c.is_ascii_digit()) => head,
-        _ => s,
-    };
-    s.trim_end().to_string()
+    if let Some(i) = s.find(|c: char| c.is_ascii_digit()) {
+        s = &s[..i];
+    }
+    s.trim_end_matches(['-', ':', ' ']).to_string()
 }
 
 /// Upsert (or remove, when `secs` is None) a `[zone_respawn]` entry in the DB
@@ -929,6 +939,10 @@ fn do_add(
     by: Option<&str>,
     started_at: Instant,
 ) -> Option<()> {
+    // Store the NORMALIZED zone ("Befallen", never "Befallen 4 (Refined)"):
+    // rares are tracked by name in ANY instance of a zone, so the stored zone
+    // is the shared identity, not the one instance the add happened in.
+    let zone = zone.map(|z| normalize_zone(&z)).filter(|z| !z.is_empty());
     rares.insert(name.to_lowercase(), (secs, None));
     if let Some(p) = rare_db_path {
         append_rare(p, name, zone.as_deref(), secs, by);
@@ -1324,6 +1338,11 @@ mod tests {
         assert_eq!(super::normalize_zone("New Sebilis Expedition 31"), "New Sebilis Expedition");
         assert_eq!(super::normalize_zone("The Ruins of Old Guk"), "The Ruins of Old Guk");
         assert_eq!(super::normalize_zone("North Freeport"), "North Freeport");
+        // First-digit rule: everything from the first digit on is instance
+        // decoration, whatever its shape.
+        assert_eq!(super::normalize_zone("Befallen 12-3"), "Befallen");
+        assert_eq!(super::normalize_zone("Lower Guk 8156"), "Lower Guk");
+        assert_eq!(super::normalize_zone("Kaesora (Adaptive)"), "Kaesora");
     }
 
     #[test]

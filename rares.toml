@@ -36,13 +36,13 @@ notes = "~4:25; shares the Baron's cycle (V`Zher family); calibrated -15s from i
 
 [[rare]]
 name = "Korven Nisere"
-zone = "Befallen 4 (Refined)"
+zone = "Befallen"
 respawn_seconds = 275
 notes = "added in-game 2026-07-12"
 
 [[rare]]
 name = "Knight V`Tal"
-zone = "Befallen 4 (Refined)"
+zone = "Befallen"
 respawn_seconds = 300
 notes = "added in-game 2026-07-12"
 

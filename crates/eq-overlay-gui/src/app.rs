@@ -1262,11 +1262,26 @@ impl OverlayApp {
         ui.add_space(8.0);
         ui.label(RichText::new("Command channel").color(INK).strong().size(12.5));
         ui.horizontal(|ui| {
-            ui.add(egui::TextEdit::singleline(&mut self.channel_edit).desired_width(140.0));
+            // Applies LIVE on commit (Enter / focus loss): the pipeline swaps
+            // its regex via Control::SetChannel — no restart, auto-saved.
+            let resp =
+                ui.add(egui::TextEdit::singleline(&mut self.channel_edit).desired_width(140.0));
+            if resp.lost_focus() {
+                let t = self.channel_edit.trim().to_string();
+                if t.is_empty() {
+                    self.channel_edit = self.info.command_channel.clone(); // revert
+                } else if t != self.info.command_channel {
+                    self.info.command_channel = t.clone();
+                    if let Some(tx) = &self.control_tx {
+                        let _ = tx.send(eq_core::Control::SetChannel { name: t });
+                    }
+                    self.persist_config();
+                }
+            }
             cell_line(
                 ui,
                 240.0,
-                RichText::new(format!("join it in game:  /join {}", self.channel_edit.trim()))
+                RichText::new(format!("in game:  /autojoin {}", self.channel_edit.trim()))
                     .color(dim),
                 None,
             );
@@ -1276,21 +1291,23 @@ impl OverlayApp {
             "Your PRIVATE command channel — defaults to your character name. Set it with \
              /autojoin name (list it first so it's always /1 every session; add a password to \
              lock it: /autojoin name:password). Only your own messages here are read, so no \
-             one else can touch your list.",
+             one else can touch your list. Changes here apply immediately.",
         );
 
         ui.add_space(8.0);
         ui.label(RichText::new("Overlay position").color(INK).strong().size(12.5));
         self.overlay_position_picker(ui, ctx);
 
+        // Everything on this tab applies live EXCEPT the game folder: changing
+        // it means reloading the spell DB and re-finding the log, which is a
+        // full pipeline restart — hence this one button, enabled only then.
         ui.add_space(8.0);
-        let channel_dirty = {
-            let t = self.channel_edit.trim();
-            !t.is_empty() && t != self.info.command_channel
-        };
-        let dirty = self.pending_game_dir.is_some() || channel_dirty;
-        let has_dir = self.pending_game_dir.is_some() || self.info.game_dir.is_some();
-        if ui.add_enabled(dirty && has_dir, egui::Button::new("Save & Restart")).clicked() {
+        let folder_pending = self.pending_game_dir.is_some();
+        if ui
+            .add_enabled(folder_pending, egui::Button::new("Apply folder & restart"))
+            .on_hover_text("Only a game-folder change needs this — everything else applies instantly.")
+            .clicked()
+        {
             self.save_and_restart(ctx);
         }
 
