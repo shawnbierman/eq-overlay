@@ -62,8 +62,9 @@ notes = "11 min, set by hand 2026-07-12"
 
 
 
+
 [[rare]]
-name = "a bloodthirsty ghoul"
-zone = "The Ruins of Old Guk"
-respawn_seconds = 660
+name = "a froglok ton warrior"
+zone = "The City of Guk"
+respawn_seconds = 300
 notes = "added in-game 2026-07-12"

@@ -52,7 +52,7 @@ flowchart LR
 
 ## In-game commands
 
-Commands go through a channel **named after your character** — private to you, so no one else can touch your list. Join it once (a password locks it to you): `/join Yaro:secret`. Then **target a mob** and:
+Commands go through a channel **named after your character** — private to you, so no one else can touch your list. Set it with **`/autojoin Yaro`** — list it first and it's always channel **`/1`**, every session (add a password to lock it: `/autojoin Yaro:secret`). Then **target a mob** and:
 
 | type | it does |
 |---|---|
@@ -62,7 +62,7 @@ Commands go through a channel **named after your character** — private to you,
 | `remember` | track the last mob you killed (no target needed) |
 | `zone 9:30` | set THIS zone's default respawn — bare `remember`s here use it (`zone clear` unsets) |
 
-💡 Bind `/N remember %T` to a **hotkey** (N = your channel's number) — one press, no typing. Or skip all of this and use the **Rares tab** in the settings window: recent kills, one-click add.
+💡 Bind **`/1 remember %T`** to a **hotkey** — one press, no typing. Use `/autojoin` (not `/join`), so the channel keeps the same number every session. Or skip all this and use the **Rares tab** in the settings window: recent kills, one-click add.
 
 <details>
 <summary>🔧 <b>Building from source</b> (optional — for devs, or if Smart App Control blocks unsigned exes)</summary>

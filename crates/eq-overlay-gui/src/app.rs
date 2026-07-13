@@ -1154,10 +1154,11 @@ impl OverlayApp {
         ui.add_space(4.0);
         ui.label(
             RichText::new(format!(
-                "In game: /join {ch} (your private channel), then target a mob and  remember %T  \
-                 —  or  remember 4:25 %T  for an exact time,  forget %T  to drop it. Bind  \
-                 /N remember %T  to a hotkey for one-press adds ({ch} is channel N).  zone 9:30  \
-                 sets this zone's default respawn. Respawns tighten automatically as you camp.",
+                "In game: /autojoin {ch} (your private channel — list it first so it's always \
+                 /1), then target a mob and  remember %T  —  or  remember 4:25 %T  for an exact \
+                 time,  forget %T  to drop it. Bind  /1 remember %T  to a hotkey for one-press \
+                 adds.  zone 9:30  sets this zone's default respawn. Respawns tighten \
+                 automatically as you camp.",
                 ch = if self.info.command_channel.is_empty() {
                     "<your name>"
                 } else {
@@ -1256,9 +1257,10 @@ impl OverlayApp {
         });
         ui.colored_label(
             dim,
-            "Your PRIVATE command channel — defaults to your character name. Join it alone \
-             (add a password to lock it: /join name:password). Only your own messages here \
-             are read, so no one else can touch your list.",
+            "Your PRIVATE command channel — defaults to your character name. Set it with \
+             /autojoin name (list it first so it's always /1 every session; add a password to \
+             lock it: /autojoin name:password). Only your own messages here are read, so no \
+             one else can touch your list.",
         );
 
         ui.add_space(8.0);
