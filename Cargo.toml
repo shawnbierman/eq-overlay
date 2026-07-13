@@ -1,4 +1,4 @@
-# Workspace root. The testable core lives in `crates/eq-core`; the CLI that
+﻿# Workspace root. The testable core lives in `crates/eq-core`; the CLI that
 # drives it lives in `crates/eq-cli`. A future `crates/eq-overlay-gui` can be
 # added as a third member that consumes EngineEvents over an mpsc channel.
 [workspace]
@@ -11,7 +11,7 @@ default-members = ["crates/eq-core", "crates/eq-cli"]
 
 [workspace.package]
 edition = "2021"
-version = "0.1.0"
+version = "0.1.1"
 license = "MIT OR Apache-2.0"
 
 # Versions are pinned once here and referenced with `dep.workspace = true`
