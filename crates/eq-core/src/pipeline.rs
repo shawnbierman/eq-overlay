@@ -207,7 +207,10 @@ fn run(
     // the loop below keep both current after launch.
     let level_re = Regex::new(r"Welcome to level (\d+)!").expect("valid level regex");
     let zone_re = Regex::new(r"You have entered (.+?)\.").expect("valid zone regex");
-    let (start_zone, start_level) = scan_current(&log_path, &zone_re, &level_re);
+    // Used live below AND in the startup back-scan to pre-seed the cast history.
+    let cast_re = Regex::new(r"You begin (?:casting|singing) (.+)\.").expect("valid cast regex");
+    let (start_zone, start_level, seen_casts) =
+        scan_current(&log_path, &zone_re, &level_re, &cast_re);
     let mut current_zone = start_zone.clone();
     let mut player_level = start_level.unwrap_or(initial_level);
     match start_level {
@@ -227,10 +230,10 @@ fn run(
         return Ok(());
     }
 
-    // Cast-driven auto-tracking (spell DB): "You begin casting X." arms X's land
-    // line; when it lands we start a bar with the DB's duration + icon. A generic
-    // "Your X spell has worn off of T." clears it. No per-spell config required.
-    let cast_re = Regex::new(r"You begin (?:casting|singing) (.+)\.").expect("valid cast regex");
+    // Cast-driven auto-tracking (spell DB): "You begin casting X." (cast_re,
+    // defined above) arms X's land line; when it lands we start a bar with the
+    // DB's duration + icon. A generic "Your X spell has worn off of T." clears
+    // it. No per-spell config required.
     let wornoff_re =
         Regex::new(r"Your (.+?) spell has worn off of (.+?)\.").expect("valid wear-off regex");
     // "<target> has been awakened by <attacker>." — the game's explicit
@@ -240,9 +243,21 @@ fn run(
     let awaken_re =
         Regex::new(r"^(.+?) has been awakened by .+\.").expect("valid awaken regex");
     let mut pending: Vec<(SpellInfo, Instant)> = Vec::new();
-    // Spells the player has cast this session — gates the land-only fallback so a
-    // common combat message can't spawn a bar for a spell they never cast.
+    // Spells the player has cast — gates the land-only fallback so common combat
+    // text can't spawn a bar for a spell they never cast. PRE-SEEDED from the
+    // whole-log back-scan so a mid-fight (re)launch resolves lands immediately;
+    // without this, an AoE mez whose cast the overlay didn't witness left every
+    // one of its lands unresolved (no bars at all). Resolve each scanned cast the
+    // same way the live handler does: exact name, else the base (ranked) name.
     let mut cast_history: HashSet<String> = HashSet::new();
+    if let Some(db) = &spell_db {
+        for cast_name in &seen_casts {
+            let base = crate::spelldb::base_spell_name(cast_name);
+            if let Some(info) = db.get(cast_name).or_else(|| base.and_then(|b| db.get(b))) {
+                cast_history.insert(base.map(str::to_string).unwrap_or_else(|| info.name.clone()));
+            }
+        }
+    }
     // A failed cast must disarm its pending land, or the arm lingers (up to
     // PENDING_TTL) and another caster's same spell landing nearby would be
     // claimed as ours (standard practice: nparse/EQTool cancel pending on these).
@@ -1132,15 +1147,23 @@ fn is_zone_name(z: &str) -> bool {
         || low.contains("pvp"))
 }
 
-/// One whole-log read to find the CURRENT zone + level: the LAST match of each.
-/// Reads the WHOLE file, not a tail window — after a long fight in one zone the
-/// last "You have entered X." can be megabytes behind the end. `.last()` (not
-/// max) is also right for level: a reused log (a char deleted then recreated with
-/// the same name shares the file) holds the old char's higher levels *earlier*.
-fn scan_current(path: &Path, zone_re: &Regex, level_re: &Regex) -> (Option<String>, Option<u32>) {
+/// One whole-log read to find the CURRENT zone + level (the LAST match of each)
+/// AND the SET of every spell you've cast in the log. Reads the WHOLE file, not
+/// a tail window — after a long fight in one zone the last "You have entered X."
+/// can be megabytes back. `.last()` (not max) is also right for level: a reused
+/// log (a char deleted then recreated with the same name shares the file) holds
+/// the old char's higher levels *earlier*. The cast set pre-seeds `cast_history`
+/// so a mid-fight (re)launch resolves lands right away — otherwise an AoE spell
+/// whose cast the overlay never witnessed leaves all its lands unresolved.
+fn scan_current(
+    path: &Path,
+    zone_re: &Regex,
+    level_re: &Regex,
+    cast_re: &Regex,
+) -> (Option<String>, Option<u32>, HashSet<String>) {
     let bytes = match std::fs::read(path) {
         Ok(b) => b,
-        Err(_) => return (None, None),
+        Err(_) => return (None, None, HashSet::new()),
     };
     let text = String::from_utf8_lossy(&bytes);
     let zone = zone_re
@@ -1152,7 +1175,11 @@ fn scan_current(path: &Path, zone_re: &Regex, level_re: &Regex) -> (Option<Strin
         .captures_iter(&text)
         .filter_map(|c| c[1].parse::<u32>().ok())
         .last();
-    (zone, level)
+    let casts = cast_re
+        .captures_iter(&text)
+        .filter_map(|c| c.get(1).map(|m| m.as_str().trim().to_string()))
+        .collect();
+    (zone, level, casts)
 }
 
 /// Short category tag (drives the bar colour + fallback abbreviation) guessed
