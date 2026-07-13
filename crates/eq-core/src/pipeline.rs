@@ -779,23 +779,32 @@ fn channel_cmd_other_regex(channel: &str) -> Regex {
         .expect("valid channel command regex")
 }
 
-/// Grammar of `add`: `[m:ss | seconds] [mob name]` -> (explicit secs, explicit
-/// name). A missing time falls back to the zone default, then 5:00.
+/// Grammar of `add`: the time may come before OR after the name — people type
+/// both `add 9:30 a frenzied ghoul` and `add a frenzied ghoul 9:30`. Returns
+/// (explicit secs, explicit name); a missing time falls back to the zone
+/// default, then 5:00.
 fn parse_add(rest: &str) -> (Option<u64>, Option<String>) {
-    match rest.split_once(' ') {
-        None if rest.is_empty() => (None, None),
-        None => match parse_secs(rest) {
-            Some(s) => (Some(s), None),
-            None => (None, Some(rest.to_string())),
-        },
-        Some((first, tail)) => match parse_secs(first) {
-            Some(s) => {
-                let t = tail.trim();
-                (Some(s), (!t.is_empty()).then(|| t.to_string()))
-            }
-            None => (None, Some(rest.to_string())),
-        },
+    if rest.is_empty() {
+        return (None, None);
     }
+    if let Some(s) = parse_secs(rest) {
+        return (Some(s), None); // just a time
+    }
+    // Leading time: "9:30 name…"
+    if let Some((first, tail)) = rest.split_once(' ') {
+        if let Some(s) = parse_secs(first) {
+            let t = tail.trim();
+            return (Some(s), (!t.is_empty()).then(|| t.to_string()));
+        }
+    }
+    // Trailing time: "name… 9:30"
+    if let Some((head, last)) = rest.rsplit_once(' ') {
+        if let Some(s) = parse_secs(last) {
+            let h = head.trim();
+            return (Some(s), (!h.is_empty()).then(|| h.to_string()));
+        }
+    }
+    (None, Some(rest.to_string()))
 }
 
 /// Look up the default respawn for the (normalized) current zone.
@@ -1202,6 +1211,15 @@ mod tests {
         assert_eq!(
             super::parse_add("Baron Telyx V`Zher"),
             (None, Some("Baron Telyx V`Zher".to_string()))
+        );
+        // Trailing time works too — it's how people naturally type it.
+        assert_eq!(
+            super::parse_add("a frenzied ghoul 9:30"),
+            (Some(570), Some("a frenzied ghoul".to_string()))
+        );
+        assert_eq!(
+            super::parse_add("a frenzied ghoul 660"),
+            (Some(660), Some("a frenzied ghoul".to_string()))
         );
 
         assert_eq!(super::parse_secs("265"), Some(265));
