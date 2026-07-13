@@ -14,18 +14,34 @@ it just reads files the game writes to disk (your log + the client's spell data)
 
 <p align="center"><img src="docs/screenshot.png" width="520" alt="In game: the zone tab, three debuff bars with real spell icons, and a rare respawn clock counting down"></p>
 
-**Jump to:** [Setup](#setup) · [What you get](#what-you-get) · [In-game commands](#in-game-commands) · [Build it yourself](#-building-from-source) · [Help](#-troubleshooting)
+**Jump to:** [Setup](#setup) · [What you get](#what-you-get) · [Build it yourself](#-building-from-source) · [Help](#-troubleshooting)
 
 ## Setup
 
-1. **[Download the zip](https://github.com/shawnbierman/eq-overlay/releases)** and unzip it anywhere (Desktop is fine).
-2. **Run `eq-overlay-gui.exe`.** Windows will say "unknown publisher" the first time → **More info → Run anyway**.
-3. In game: **`/log on`**, and play in **windowed mode**: EQ Options →
-   **System → Display** → click **"Switch to Windowed"**. (If the button
-   already says "Switch to Fullscreen", you're set.) Overlays can't draw over
-   fullscreen mode.
+**Install** (once)
 
-Done. It finds your EQ install by itself and lives in the system tray (🕐 yellow icon = settings). No config files, no triggers to write.
+1. **[Download the zip](https://github.com/shawnbierman/eq-overlay/releases)** → unzip anywhere (Desktop is fine).
+2. Run **`eq-overlay-gui.exe`**. First launch: Windows says "unknown publisher" → **More info → Run anyway**.
+3. It finds your EQ folder on its own and drops a 🕐 icon in the system tray (that's Settings). No config files, no triggers.
+
+**In game** (once)
+
+4. Turn on logging: **`/log on`**
+5. Join your private command channel — name it after your character:
+   **`/autojoin YourName`** — listed first, it's always channel **`/1`** (lock it: `/autojoin YourName:password`)
+6. Make a **Socials** button that sends: **`/1 remember %T`**
+
+**Play** — at any named mob:
+
+| do this | result |
+|---|---|
+| **target it, press your button** | starts its respawn timer ⏰ |
+| type `/1 remember` | tracks your **last kill** (no target needed) |
+| type `/1 remember 4:25 %T` | …with an exact respawn time |
+| type `/1 forget %T` | stops tracking your target |
+| type `/1 zone 9:30` | sets a default respawn for the **whole zone** |
+
+Prefer clicking? The **Rares tab** in Settings does the same — recent kills, one-click add. Only *your* channel messages are read, so no one else can touch your list.
 
 ## What you get
 
@@ -50,20 +66,6 @@ flowchart LR
     class LOG,DATA,BARS,DB,CHAT dark
 ```
 
-## In-game commands
-
-Commands go through a channel **named after your character** — private to you, so no one else can touch your list. Set it with **`/autojoin Yaro`** — list it first and it's always channel **`/1`**, every session (add a password to lock it: `/autojoin Yaro:secret`). Then **target a mob** and:
-
-| type | it does |
-|---|---|
-| `remember %T` | track your target (`%T` = its name) |
-| `remember 4:25 %T` | …with the real respawn time |
-| `forget %T` | stop tracking it |
-| `remember` | track the last mob you killed (no target needed) |
-| `zone 9:30` | set THIS zone's default respawn — bare `remember`s here use it (`zone clear` unsets) |
-
-💡 Bind **`/1 remember %T`** to a **hotkey** — one press, no typing. Use `/autojoin` (not `/join`), so the channel keeps the same number every session. Or skip all this and use the **Rares tab** in the settings window: recent kills, one-click add.
-
 <details>
 <summary>🔧 <b>Building from source</b> (optional — for devs, or if Smart App Control blocks unsigned exes)</summary>
 
@@ -86,7 +88,7 @@ A `config.toml` is generated on first run and managed by the settings window —
 ```toml
 [general]
 log_dir = 'C:\...\EverQuest Legends\Logs'   # newest eqlog_*.txt is followed
-command_channel = "Yaro"                     # private; defaults to your character name
+command_channel = "YourName"                 # private; defaults to your character name
 
 [overlay]
 x = 20
@@ -102,7 +104,7 @@ height = 480
 <details>
 <summary>🆘 <b>Troubleshooting</b></summary>
 
-- **No bars?** Settings → Status: is it tailing the right character's log? Is `/log on`? EQ must be **windowed** (Options → System → Display → "Switch to Windowed") — nothing can draw over fullscreen.
+- **No bars?** Settings → Status: is it tailing the right character's log? Is `/log on`? Works in fullscreen or windowed — either is fine.
 - **A mez bar flashed and vanished** — the mez broke or didn't stick. The overlay agrees with the log; believe it.
 - **New spell rank runs short?** Durations self-correct after the first clean, unbroken wear-off (mote ranks aren't in the game's data files).
 - **Windows refuses to run it at all** — that's Smart App Control. Build from source (above).
