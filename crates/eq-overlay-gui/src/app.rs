@@ -902,13 +902,19 @@ impl OverlayApp {
             match &self.info.log_path {
                 Some(p) => {
                     let file = p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-                    match &self.info.char_server {
-                        Some((c, s)) => ui.label(format!("{c} on {s}   ({file})")),
-                        None => ui.label(file),
+                    let txt = match &self.info.char_server {
+                        Some((c, s)) => format!("{c} on {s}   ({file})"),
+                        None => file,
                     };
+                    cell_wrap(ui, 316.0, txt);
                 }
                 None => {
-                    ui.colored_label(warn, "no log file found — turn logging on with /log in game");
+                    cell_wrap(
+                        ui,
+                        316.0,
+                        RichText::new("no log file found — turn logging on with /log in game")
+                            .color(warn),
+                    );
                 }
             }
             ui.end_row();
@@ -982,11 +988,13 @@ impl OverlayApp {
                         let mut set_time: Option<(String, u64)> = None;
                         for r in &self.info.rares {
                             let lower = r.name.to_lowercase();
-                            let name = ui.colored_label(gold, &r.name);
-                            if let Some(n) = &r.notes {
-                                name.on_hover_text(n);
-                            }
-                            ui.label(r.zone.clone().unwrap_or_else(|| "—".into()));
+                            let hover = match &r.notes {
+                                Some(n) => format!("{}\n{n}", r.name),
+                                None => r.name.clone(),
+                            };
+                            cell_line(ui, 124.0, RichText::new(&r.name).color(gold), Some(hover));
+                            let zone = r.zone.clone().unwrap_or_else(|| "—".into());
+                            cell_line(ui, 86.0, zone.clone(), Some(zone));
 
                             // Respawn: edit in place — type "11:00", press Enter.
                             let cur = fmt_secs_edit(r.respawn_seconds);
@@ -1020,19 +1028,31 @@ impl OverlayApp {
                                 }
                             }
 
-                            // Remove: a clear X that asks before it acts.
+                            // Remove: a clear X that asks before it acts. The
+                            // confirm is ONE button ("sure?") so it fits the
+                            // same narrow column — Yes/No used to overflow the
+                            // window and get clipped out of reach.
                             if can_edit {
                                 if self.confirm_remove.as_deref() == Some(r.name.as_str()) {
-                                    ui.horizontal(|ui| {
-                                        ui.colored_label(WARN, "remove?");
-                                        if ui.small_button("Yes").clicked() {
-                                            remove = Some(r.name.clone());
-                                            self.confirm_remove = None;
-                                        }
-                                        if ui.small_button("No").clicked() {
-                                            self.confirm_remove = None;
-                                        }
-                                    });
+                                    let b = ui
+                                        .add(
+                                            egui::Button::new(
+                                                RichText::new("sure?")
+                                                    .color(Color32::WHITE)
+                                                    .size(11.0),
+                                            )
+                                            .fill(WARN)
+                                            .small(),
+                                        )
+                                        .on_hover_text(
+                                            "click to remove — click anywhere else to keep it",
+                                        );
+                                    if b.clicked() {
+                                        remove = Some(r.name.clone());
+                                        self.confirm_remove = None;
+                                    } else if b.clicked_elsewhere() {
+                                        self.confirm_remove = None;
+                                    }
                                 } else if ui
                                     .small_button(RichText::new("X").color(WARN).strong())
                                     .on_hover_text("stop tracking this rare (asks first)")
@@ -1108,7 +1128,7 @@ impl OverlayApp {
                     |ui| {
                         let mut add: Option<(String, Instant)> = None;
                         for (name, at) in &candidates {
-                            ui.label(name);
+                            cell_line(ui, 226.0, name.as_str(), Some(name.clone()));
                             ui.colored_label(
                                 dim,
                                 format!("{} ago", fmt_remaining(at.elapsed())),
@@ -1162,7 +1182,7 @@ impl OverlayApp {
                         ui.colored_label(dim, RichText::new("Duration").size(11.0));
                         ui.end_row();
                         for (name, (count, secs)) in rows {
-                            ui.label(name);
+                            cell_line(ui, 240.0, name.as_str(), Some(name.clone()));
                             ui.label(count.to_string());
                             ui.label(fmt_remaining(Duration::from_secs(*secs)));
                             ui.end_row();
@@ -1221,9 +1241,12 @@ impl OverlayApp {
         ui.label(RichText::new("Command channel").color(INK).strong().size(12.5));
         ui.horizontal(|ui| {
             ui.add(egui::TextEdit::singleline(&mut self.channel_edit).desired_width(140.0));
-            ui.colored_label(
-                dim,
-                format!("join it in game:  /join {}", self.channel_edit.trim()),
+            cell_line(
+                ui,
+                240.0,
+                RichText::new(format!("join it in game:  /join {}", self.channel_edit.trim()))
+                    .color(dim),
+                None,
             );
         });
         ui.colored_label(
@@ -1499,17 +1522,18 @@ impl OverlayApp {
         ui.label("Log-driven spell and rare-respawn timers for EverQuest Legends.");
         ui.add_space(4.0);
         egui::Grid::new("eqov-about").num_columns(2).spacing([16.0, 5.0]).show(ui, |ui| {
+            const VAL_W: f32 = 296.0;
             ui.colored_label(dim, "How it works");
-            ui.label("reads the game's files on disk (log + spell data) — never memory, packets, or input");
+            cell_wrap(ui, VAL_W, "reads the game's files on disk (log + spell data) — never memory, packets, or input");
             ui.end_row();
             ui.colored_label(dim, "Built with");
-            ui.label("Rust, egui + wgpu");
+            cell_wrap(ui, VAL_W, "Rust, egui + wgpu");
             ui.end_row();
             ui.colored_label(dim, "License");
-            ui.label("MIT — free to use, share, and modify");
+            cell_wrap(ui, VAL_W, "MIT — free to use, share, and modify");
             ui.end_row();
             ui.colored_label(dim, "Interface");
-            ui.label("lovingly borrowed from BeOS R5");
+            cell_wrap(ui, VAL_W, "lovingly borrowed from BeOS R5");
             ui.end_row();
         });
         ui.add_space(8.0);
@@ -1522,23 +1546,26 @@ impl OverlayApp {
             self.persist_config();
         }
         ui.horizontal(|ui| {
+            // Failure text carries whatever the network stack said — cap it.
+            const STATE_W: f32 = 262.0;
             match &self.update_state {
                 UpdateState::Idle => {
-                    ui.colored_label(dim, "not checked yet this session");
+                    cell_wrap(ui, STATE_W, RichText::new("not checked yet this session").color(dim));
                 }
                 UpdateState::UpToDate => {
-                    ui.colored_label(dim, "up to date");
+                    cell_wrap(ui, STATE_W, RichText::new("up to date").color(dim));
                 }
                 UpdateState::Busy(s) => {
-                    ui.colored_label(dim, s.as_str());
+                    cell_wrap(ui, STATE_W, RichText::new(s.as_str()).color(dim));
                 }
                 UpdateState::Failed(e) => {
-                    ui.colored_label(WARN, e.as_str());
+                    cell_wrap(ui, STATE_W, RichText::new(e.as_str()).color(WARN));
                 }
                 UpdateState::Available { version, .. } => {
-                    ui.colored_label(
-                        ACCENT,
-                        RichText::new(format!("{version} is available!")).strong(),
+                    cell_wrap(
+                        ui,
+                        STATE_W,
+                        RichText::new(format!("{version} is available!")).color(ACCENT).strong(),
                     );
                 }
             }
@@ -2122,6 +2149,39 @@ fn synth_wav(notes: &[(f32, u32)], gap_ms: u32) -> Vec<u8> {
 }
 
 /// "342", "1.2k" — compact DPS for the title tab.
+/// A grid/row cell that can never widen the window: the text lays out inside
+/// a `w`-wide box and wraps onto more lines. Any long text inside a `Grid` or
+/// `horizontal` MUST go through this (or [`cell_line`]) — a bare label there
+/// gets unlimited width, pushes the layout past the window edge, and widens
+/// the parent's `max_rect` so even top-level labels BELOW it wrap too wide.
+/// Three text-clipping bugs came from exactly that.
+fn cell_wrap(ui: &mut egui::Ui, w: f32, text: impl Into<egui::WidgetText>) {
+    ui.vertical(|ui| {
+        ui.set_max_width(w);
+        ui.label(text);
+    });
+}
+
+/// One-line sibling of [`cell_wrap`] for table cells that must stay one row
+/// tall (names, zones): truncates with an ellipsis at `w`, full text on hover.
+fn cell_line(
+    ui: &mut egui::Ui,
+    w: f32,
+    text: impl Into<egui::WidgetText>,
+    hover: Option<String>,
+) -> egui::Response {
+    let r = ui
+        .vertical(|ui| {
+            ui.set_max_width(w);
+            ui.add(egui::Label::new(text).truncate())
+        })
+        .inner;
+    match hover {
+        Some(h) => r.on_hover_text(h),
+        None => r,
+    }
+}
+
 fn fmt_dps(dps: u64) -> String {
     if dps >= 1000 {
         format!("{:.1}k", dps as f32 / 1000.0)
