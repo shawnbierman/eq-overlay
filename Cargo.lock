@@ -1223,7 +1223,7 @@ checksum = "483440db0b7993cf77a20314f08311dbe95675092405518c0677aa08c151a3ea"
 
 [[package]]
 name = "eq-cli"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1233,7 +1233,7 @@ dependencies = [
 
 [[package]]
 name = "eq-core"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "aho-corasick",
  "anyhow",
@@ -1249,7 +1249,7 @@ dependencies = [
 
 [[package]]
 name = "eq-overlay-gui"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "clap",
