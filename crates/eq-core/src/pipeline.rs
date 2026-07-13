@@ -853,7 +853,7 @@ pub fn normalize_zone(z: &str) -> String {
 /// file — same byte-preserving surgery as the rare add/remove helpers.
 fn upsert_zone_respawn_in_file(path: &Path, zone: &str, secs: Option<u64>) {
     let text = std::fs::read_to_string(path).unwrap_or_default();
-    let new_line = secs.map(|s| format!("\"{zone}\" = {s}"));
+    let new_line = secs.map(|s| format!("\"{}\" = {s}", toml_escape(zone)));
     let mut out = String::new();
     let mut in_table = false;
     let mut table_found = false;
@@ -983,7 +983,10 @@ fn update_rare_secs_in_file(path: &Path, name: &str, secs: u64) {
         if t == "[[rare]]" {
             in_target_block = false;
         } else if let Some(v) = t.strip_prefix("name = \"").and_then(|v| v.strip_suffix('"')) {
-            in_target_block = v.eq_ignore_ascii_case(name);
+            // Compare against the ESCAPED name: that's how it's stored on disk,
+            // so names with special characters still match (a no-op for the
+            // ordinary names that escape unchanged).
+            in_target_block = v.eq_ignore_ascii_case(&toml_escape(name));
         } else if in_target_block && t.starts_with("respawn_seconds") {
             out.push_str(&format!("respawn_seconds = {secs}\n"));
             continue;
@@ -1020,7 +1023,8 @@ fn remove_rare_from_file(path: &Path, name: &str) {
         } else if in_blocks {
             let t = line.trim();
             if let Some(v) = t.strip_prefix("name = \"").and_then(|v| v.strip_suffix('"')) {
-                if v.eq_ignore_ascii_case(name) {
+                // Match the escaped on-disk form (a no-op for ordinary names).
+                if v.eq_ignore_ascii_case(&toml_escape(name)) {
                     drop_block = true;
                 }
             }
@@ -1049,6 +1053,30 @@ pub fn parse_secs(s: &str) -> Option<u64> {
     }
 }
 
+/// Escape a string for a TOML basic (double-quoted) value. Mob names and the
+/// credited sender arrive from the in-game command channel, which is UNTRUSTED
+/// and community-shared (anyone on the server can `/join eqov`). Writing a raw
+/// `"` would break out of the string and corrupt `rares.toml` — an invalid file
+/// then fails the whole config load on the next launch. Escape `\` and `"` and
+/// drop control characters so hostile input can only ever be an inert value.
+fn toml_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            // TOML forbids raw control chars in basic strings; \n \r \t have
+            // escapes, anything else control-ish is simply dropped.
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c.is_control()) => {}
+            c => out.push(c),
+        }
+    }
+    out
+}
+
 /// Upsert an in-game-added rare into the shareable DB (creating the file if
 /// needed): any existing entry with the same name is removed first, so
 /// re-adding UPDATES instead of accumulating duplicate blocks.
@@ -1059,12 +1087,12 @@ fn append_rare(path: &Path, name: &str, zone: Option<&str>, secs: u64, by: Optio
     if !path.exists() {
         s.push_str("# Shareable rare / named respawn database - EverQuest Legends.\n");
     }
-    s.push_str(&format!("\n[[rare]]\nname = \"{name}\"\n"));
+    s.push_str(&format!("\n[[rare]]\nname = \"{}\"\n", toml_escape(name)));
     if let Some(z) = zone {
-        s.push_str(&format!("zone = \"{z}\"\n"));
+        s.push_str(&format!("zone = \"{}\"\n", toml_escape(z)));
     }
     let credit = match by {
-        Some(who) => format!("added in-game by {who}"),
+        Some(who) => format!("added in-game by {}", toml_escape(who)),
         None => "added in-game".to_string(),
     };
     s.push_str(&format!(
@@ -1246,6 +1274,44 @@ mod tests {
         assert_eq!(super::parse_secs("0:45"), Some(45));
         assert_eq!(super::parse_secs("4:99"), None);
         assert_eq!(super::parse_secs("Baron"), None);
+    }
+
+    #[test]
+    fn hostile_channel_name_cannot_corrupt_the_rare_db() {
+        // A griefer in the shared `eqov` channel sends a mob name laced with
+        // TOML-breaking characters. It must land as an INERT string value, and
+        // the file must still parse afterward — never a broken config load.
+        use std::collections::HashMap;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("rares.toml");
+
+        let evil = "x\" \nlog_dir = \"/etc/pwned\"\n[[rare]]\nname = \"y";
+        super::append_rare(&path, evil, Some("Zone\"Break"), 300, Some("Grief\"er"));
+        // A second add exercises the remove-first upsert path over escaped text.
+        super::append_rare(&path, evil, None, 120, None);
+
+        let text = std::fs::read_to_string(&path).unwrap();
+
+        // Structural proof of no injection: the ONLY top-level key is `rare`.
+        // The `log_dir`/extra `[[rare]]` the attacker embedded must live inside
+        // a string value, not become real TOML structure.
+        let value: toml::Value = toml::from_str(&text).expect("hostile input must not corrupt the DB");
+        let table = value.as_table().unwrap();
+        assert_eq!(table.keys().collect::<Vec<_>>(), vec!["rare"], "unexpected top-level keys: {table:?}");
+
+        // And the name survives verbatim through escape + re-parse; the upsert
+        // (add-twice) leaves exactly one entry, not two.
+        #[derive(serde::Deserialize)]
+        struct Db {
+            #[serde(default, rename = "rare")]
+            rares: Vec<super::super::config::RareConfig>,
+            #[serde(default)]
+            zone_respawn: HashMap<String, u64>,
+        }
+        let db: Db = toml::from_str(&text).unwrap();
+        assert_eq!(db.rares.len(), 1, "upsert should leave exactly one entry");
+        assert_eq!(db.rares[0].name, evil);
+        assert!(db.zone_respawn.is_empty());
     }
 
     #[test]

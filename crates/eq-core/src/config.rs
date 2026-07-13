@@ -269,8 +269,18 @@ impl Config {
         }
         let text = std::fs::read_to_string(&path)
             .with_context(|| format!("failed to read rare DB: {}", path.display()))?;
-        let db: RareDb = toml::from_str(&text)
-            .with_context(|| format!("failed to parse rare DB: {}", path.display()))?;
+        // A malformed shared DB must NOT brick startup. The file is community-
+        // editable and fed by an untrusted in-game channel, so a single bad
+        // entry (or a botched hand-edit) is an expected failure mode: log it and
+        // fall back to just the config's own rares rather than losing the whole
+        // config load.
+        let db: RareDb = match toml::from_str(&text) {
+            Ok(db) => db,
+            Err(e) => {
+                eprintln!("[warn] ignoring unparseable rare DB {}: {e}", path.display());
+                return Ok(());
+            }
+        };
         // Zone defaults: DB first, personal config entries override.
         let mut zr = db.zone_respawn;
         zr.extend(std::mem::take(&mut self.zone_respawn));
