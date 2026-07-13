@@ -725,6 +725,17 @@ impl OverlayApp {
                 .layout(egui::Layout::top_down(egui::Align::Min)),
         );
         self.settings_ui(&mut cui, ctx);
+
+        // Auto-fit: size the window to whatever this tab actually laid out —
+        // no more hand-tuned heights that clip when text wraps differently.
+        // Width is fixed, so wrapping is stable and this converges in a frame.
+        let needed = (cui.min_rect().max.y + 14.0).clamp(340.0, 720.0);
+        if (needed - rect.height()).abs() > 6.0 {
+            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(Vec2::new(
+                rect.width(),
+                needed,
+            )));
+        }
     }
 
     fn settings_ui(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
@@ -1146,9 +1157,8 @@ impl OverlayApp {
         });
         ui.colored_label(
             dim,
-            "The chat channel watched for in-game commands. The default, eqov, is shared by \
-             the community: a named add from ANY member (add 4:25 Baron Telyx V`Zher) goes \
-             into everyone's database. Use a name of your own instead for a private list.",
+            "Where in-game commands are typed. The default (eqov) is community-shared — \
+             named adds from any member reach everyone. Use your own name for a private list.",
         );
 
         ui.add_space(8.0);
