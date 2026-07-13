@@ -230,6 +230,11 @@ pub struct OverlayApp {
     recent_kills: Vec<(String, Instant)>,
     /// Respawn input for UI adds ("4:25" / "265"); empty = 5:00 default.
     add_secs_edit: String,
+    /// Per-row edit buffers for tracked rares' respawn times (lower name ->
+    /// text). Rows not being edited re-sync from the live value each frame.
+    edit_times: HashMap<String, String>,
+    /// A pending "remove?" confirmation (the rare's name), shown in its row.
+    confirm_remove: Option<String>,
 }
 
 #[derive(PartialEq, Clone, Copy)]
@@ -322,6 +327,8 @@ impl OverlayApp {
             control_tx,
             recent_kills: Vec::new(),
             add_secs_edit: String::new(),
+            edit_times: HashMap::new(),
+            confirm_remove: None,
         }
     }
 
@@ -886,14 +893,36 @@ impl OverlayApp {
                         ui.label("");
                         ui.end_row();
                         let mut remove: Option<String> = None;
+                        let mut set_time: Option<(String, u64)> = None;
                         for r in &self.info.rares {
+                            let lower = r.name.to_lowercase();
                             let name = ui.colored_label(gold, &r.name);
                             if let Some(n) = &r.notes {
                                 name.on_hover_text(n);
                             }
                             ui.label(r.zone.clone().unwrap_or_else(|| "—".into()));
-                            ui.label(fmt_remaining(Duration::from_secs(r.respawn_seconds)));
-                            match due.get(&r.name.to_lowercase()) {
+
+                            // Respawn: edit in place — type "11:00", press Enter.
+                            let cur = fmt_secs_edit(r.respawn_seconds);
+                            let buf = self
+                                .edit_times
+                                .entry(lower.clone())
+                                .or_insert_with(|| cur.clone());
+                            let resp =
+                                ui.add(egui::TextEdit::singleline(buf).desired_width(46.0));
+                            if resp.lost_focus() {
+                                match eq_core::parse_secs(buf.trim()) {
+                                    Some(s) if s > 0 && s != r.respawn_seconds && can_edit => {
+                                        set_time = Some((r.name.clone(), s));
+                                    }
+                                    _ => *buf = cur.clone(), // invalid/unchanged: revert
+                                }
+                            } else if !resp.has_focus() {
+                                // Idle rows follow the live value (calibration etc.).
+                                *buf = cur;
+                            }
+
+                            match due.get(&lower) {
                                 Some(rem) if rem.as_secs() == 0 => {
                                     ui.colored_label(Color32::from_rgb(30, 120, 40), "UP");
                                 }
@@ -904,18 +933,36 @@ impl OverlayApp {
                                     ui.colored_label(dim, "—");
                                 }
                             }
-                            if can_edit
-                                && ui
-                                    .small_button("✕")
-                                    .on_hover_text("stop tracking this rare")
+
+                            // Remove: a clear X that asks before it acts.
+                            if can_edit {
+                                if self.confirm_remove.as_deref() == Some(r.name.as_str()) {
+                                    ui.horizontal(|ui| {
+                                        ui.colored_label(WARN, "remove?");
+                                        if ui.small_button("Yes").clicked() {
+                                            remove = Some(r.name.clone());
+                                            self.confirm_remove = None;
+                                        }
+                                        if ui.small_button("No").clicked() {
+                                            self.confirm_remove = None;
+                                        }
+                                    });
+                                } else if ui
+                                    .small_button(RichText::new("X").color(WARN).strong())
+                                    .on_hover_text("stop tracking this rare (asks first)")
                                     .clicked()
-                            {
-                                remove = Some(r.name.clone());
+                                {
+                                    self.confirm_remove = Some(r.name.clone());
+                                }
                             }
                             ui.end_row();
                         }
                         if let (Some(name), Some(tx)) = (remove, &self.control_tx) {
                             let _ = tx.send(eq_core::Control::RemoveRare { name });
+                        }
+                        if let (Some((name, secs)), Some(tx)) = (set_time, &self.control_tx) {
+                            let _ = tx
+                                .send(eq_core::Control::SetRespawn { name, respawn_seconds: secs });
                         }
                     });
             });
@@ -1788,6 +1835,16 @@ fn fmt_dps(dps: u64) -> String {
         format!("{:.1}k", dps as f32 / 1000.0)
     } else {
         dps.to_string()
+    }
+}
+
+/// Respawn seconds as editable text: "4:25" (or bare seconds under a minute),
+/// chosen so `parse_secs` round-trips it.
+fn fmt_secs_edit(secs: u64) -> String {
+    if secs >= 60 {
+        format!("{}:{:02}", secs / 60, secs % 60)
+    } else {
+        secs.to_string()
     }
 }
 

@@ -51,6 +51,8 @@ pub enum Control {
         killed_at: Option<Instant>,
     },
     RemoveRare { name: String },
+    /// Edit a tracked rare's respawn time in place (no new spawn bar).
+    SetRespawn { name: String, respawn_seconds: u64 },
 }
 
 #[derive(Debug, Clone)]
@@ -306,6 +308,23 @@ fn run(
                             }
                         }
                         Some(false) => {}
+                    }
+                }
+                Control::SetRespawn { name, respawn_seconds } => {
+                    let lower = name.to_lowercase();
+                    if let Some(&(_, icon)) = rares.get(&lower) {
+                        rares.insert(lower, (respawn_seconds, icon));
+                        if let Some(p) = &rare_db_path {
+                            update_rare_secs_in_file(p, &name, respawn_seconds);
+                        }
+                        if send(
+                            &events_tx,
+                            EngineEvent::RareUpdated { name, respawn_seconds },
+                        )
+                        .is_none()
+                        {
+                            return Ok(());
+                        }
                     }
                 }
             }
