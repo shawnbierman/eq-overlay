@@ -235,6 +235,9 @@ pub struct OverlayApp {
     edit_times: HashMap<String, String>,
     /// A pending "remove?" confirmation (the rare's name), shown in its row.
     confirm_remove: Option<String>,
+    /// The monitor's size in points (from the root viewport), for the
+    /// overlay-position picker.
+    monitor_size: Option<Vec2>,
 }
 
 #[derive(PartialEq, Clone, Copy)]
@@ -329,6 +332,7 @@ impl OverlayApp {
             add_secs_edit: String::new(),
             edit_times: HashMap::new(),
             confirm_remove: None,
+            monitor_size: None,
         }
     }
 
@@ -589,7 +593,7 @@ impl OverlayApp {
             egui::ViewportId::from_hash_of("eqov-settings"),
             egui::ViewportBuilder::default()
                 .with_title("EQ Overlay")
-                .with_inner_size([440.0, 396.0])
+                .with_inner_size([440.0, 474.0])
                 .with_resizable(false)
                 .with_decorations(false)
                 .with_transparent(true)
@@ -1148,6 +1152,10 @@ impl OverlayApp {
         );
 
         ui.add_space(8.0);
+        ui.label(RichText::new("Overlay position").color(INK).strong().size(12.5));
+        self.overlay_position_picker(ui, ctx);
+
+        ui.add_space(8.0);
         let channel_dirty = {
             let t = self.channel_edit.trim();
             !t.is_empty() && t != self.info.command_channel
@@ -1225,6 +1233,132 @@ impl OverlayApp {
         if changed {
             self.persist_config();
         }
+    }
+
+    /// A little monitor, drawn at the real screen's aspect ratio, with nine
+    /// clickable spots. Clicking one moves the overlay window THERE, instantly,
+    /// and saves the config — the fix for "it's way off to the left on my
+    /// ultrawide".
+    fn overlay_position_picker(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        let (_, _, ow, oh) = self.info.overlay;
+        let (ow, oh) = (ow as f32, oh as f32);
+        let mon = self.monitor_size.filter(|m| m.x > 0.0).unwrap_or(Vec2::new(1920.0, 1080.0));
+        let aspect = (mon.x / mon.y).clamp(1.0, 4.0);
+
+        let mini_w = 216.0_f32;
+        let mini_h = (mini_w / aspect).max(58.0);
+        let (outer, resp) = ui.allocate_exact_size(
+            Vec2::new(mini_w + 12.0, mini_h + 12.0),
+            egui::Sense::click(),
+        );
+        let screen = Rect::from_min_size(outer.min + Vec2::new(6.0, 6.0), Vec2::new(mini_w, mini_h));
+        let p = ui.painter().clone();
+
+        // Bezel + screen.
+        p.rect_filled(outer, Rounding::ZERO, BEOS_PANEL_DK);
+        p.rect_stroke(outer, Rounding::ZERO, Stroke::new(1.0, INK));
+        p.rect_filled(screen, Rounding::ZERO, Color32::from_rgb(24, 27, 33));
+        p.rect_stroke(screen, Rounding::ZERO, Stroke::new(1.0, INK));
+
+        // The nine candidate desktop positions (margins keep it off the very
+        // edge; extra at the bottom clears the taskbar).
+        const M: f32 = 24.0;
+        const M_BOTTOM: f32 = 56.0;
+        let xs = [M, ((mon.x - ow) / 2.0).max(M), (mon.x - ow - M).max(M)];
+        let ys = [M, ((mon.y - oh) / 2.0).max(M), (mon.y - oh - M_BOTTOM).max(M)];
+
+        // Which anchor is the overlay closest to right now?
+        let (cx, cy) = (self.info.overlay.0 as f32, self.info.overlay.1 as f32);
+        let mut nearest = (0usize, 0usize);
+        let mut best = f32::MAX;
+        for (yi, yv) in ys.iter().enumerate() {
+            for (xi, xv) in xs.iter().enumerate() {
+                let d = (xv - cx).powi(2) + (yv - cy).powi(2);
+                if d < best {
+                    best = d;
+                    nearest = (xi, yi);
+                }
+            }
+        }
+
+        // Hover highlight + click handling on the 3x3 zones.
+        let mut chosen: Option<(usize, usize)> = None;
+        let pointer = resp.hover_pos();
+        for yi in 0..3 {
+            for xi in 0..3 {
+                let cell = Rect::from_min_max(
+                    Pos2::new(
+                        screen.min.x + screen.width() * xi as f32 / 3.0,
+                        screen.min.y + screen.height() * yi as f32 / 3.0,
+                    ),
+                    Pos2::new(
+                        screen.min.x + screen.width() * (xi + 1) as f32 / 3.0,
+                        screen.min.y + screen.height() * (yi + 1) as f32 / 3.0,
+                    ),
+                );
+                let hovered = pointer.is_some_and(|pt| cell.contains(pt));
+                if hovered {
+                    p.rect_filled(
+                        cell,
+                        Rounding::ZERO,
+                        Color32::from_rgba_unmultiplied(255, 203, 0, 30),
+                    );
+                    if resp.clicked() {
+                        chosen = Some((xi, yi));
+                    }
+                }
+            }
+        }
+
+        // Draw the overlay's miniature (yellow tab + a few bars) where it
+        // currently lives.
+        let scale = screen.width() / mon.x;
+        let mini = Rect::from_min_size(
+            Pos2::new(
+                screen.min.x + xs[nearest.0] * scale,
+                screen.min.y + ys[nearest.1] * scale,
+            ),
+            Vec2::new(
+                (ow * scale).max(14.0),
+                (oh * scale).min(screen.height() * 0.55).max(16.0),
+            ),
+        );
+        p.rect_filled(
+            Rect::from_min_size(mini.min, Vec2::new(mini.width() * 0.6, 3.5)),
+            Rounding::ZERO,
+            BEOS_YELLOW,
+        );
+        for k in 0..3 {
+            let bar = Rect::from_min_size(
+                mini.min + Vec2::new(0.0, 6.0 + k as f32 * 4.5),
+                Vec2::new(mini.width(), 3.0),
+            );
+            if bar.max.y < mini.max.y {
+                let c = [
+                    Color32::from_rgb(150, 92, 220),
+                    Color32::from_rgb(70, 120, 220),
+                    Color32::from_rgb(212, 166, 46),
+                ][k];
+                p.rect_filled(bar, Rounding::ZERO, c);
+            }
+        }
+
+        if let Some((xi, yi)) = chosen {
+            let (nx, ny) = (xs[xi].round() as i32, ys[yi].round() as i32);
+            self.info.overlay.0 = nx;
+            self.info.overlay.1 = ny;
+            // Move the live overlay window right now, then remember it.
+            ctx.send_viewport_cmd_to(
+                egui::ViewportId::ROOT,
+                egui::ViewportCommand::OuterPosition(Pos2::new(nx as f32, ny as f32)),
+            );
+            self.persist_config();
+        }
+
+        ui.colored_label(
+            DIM,
+            "Click where the timers should live. Moves instantly and saves itself.",
+        );
     }
 
     /// Rewrite the config with the CURRENT saved values plus live audio
@@ -1352,6 +1486,10 @@ impl eframe::App for OverlayApp {
         if !self.styled {
             self.styled = true;
             apply_beos_style(ctx);
+        }
+        // Root viewport = the overlay window; its monitor drives the picker.
+        if let Some(m) = ctx.input(|i| i.viewport().monitor_size) {
+            self.monitor_size = Some(m);
         }
         self.poll_tray(ctx);
         self.ingest();
