@@ -287,6 +287,13 @@ const EDGE: Color32 = Color32::from_rgb(96, 96, 96);
 const BEVEL_HI: Color32 = Color32::from_rgb(248, 248, 248);
 const BEVEL_LO: Color32 = Color32::from_rgb(152, 152, 152);
 
+/// Fixed inner width of the settings window, in points. The window is not
+/// resizable, so the width is ALWAYS this. It must NOT be read back from the
+/// live viewport (`rect.width()`): an undecorated immediate-viewport can report
+/// a too-narrow width on its first frame, and the self-fit would then lock that
+/// in permanently (tabs + text clipped). Pin it here and correct any drift.
+const SETTINGS_W: f32 = 440.0;
+
 /// Light, square-cornered, BeOS-flavoured widget styling for the settings
 /// window. Global to the egui context — safe because the overlay viewport
 /// paints everything with explicit colours and never uses themed widgets.
@@ -672,7 +679,7 @@ impl OverlayApp {
             egui::ViewportId::from_hash_of("eqov-settings"),
             egui::ViewportBuilder::default()
                 .with_title("EQ Overlay")
-                .with_inner_size([440.0, 474.0])
+                .with_inner_size([SETTINGS_W, 474.0])
                 .with_resizable(false)
                 .with_decorations(false)
                 .with_transparent(true)
@@ -805,13 +812,15 @@ impl OverlayApp {
         );
         self.settings_ui(&mut cui, ctx);
 
-        // Auto-fit: size the window to whatever this tab actually laid out —
-        // no more hand-tuned heights that clip when text wraps differently.
-        // Width is fixed, so wrapping is stable and this converges in a frame.
+        // Auto-fit HEIGHT to whatever this tab laid out; WIDTH is pinned to
+        // SETTINGS_W (never read back from the viewport — see the const). Also
+        // fire when the width has drifted, so a bad first-frame width heals back
+        // to SETTINGS_W instead of staying clipped.
         let needed = (cui.min_rect().max.y + 14.0).clamp(340.0, 720.0);
-        if (needed - rect.height()).abs() > 6.0 {
+        let width_off = (rect.width() - SETTINGS_W).abs() > 1.0;
+        if (needed - rect.height()).abs() > 6.0 || width_off {
             ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(Vec2::new(
-                rect.width(),
+                SETTINGS_W,
                 needed,
             )));
         }
