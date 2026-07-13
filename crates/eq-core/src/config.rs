@@ -36,6 +36,8 @@ pub struct Config {
     pub triggers: Vec<TriggerConfig>,
     #[serde(default)]
     pub audio: AudioConfig,
+    #[serde(default)]
+    pub updates: UpdatesConfig,
     /// Per-zone default respawn seconds (normalized zone name -> secs): what a
     /// bare `add` uses in that zone. Lives in the shareable rare DB's
     /// `[zone_respawn]` table; entries here override it.
@@ -45,6 +47,16 @@ pub struct Config {
     /// file doesn't exist yet) — where in-game `add` commands append entries.
     #[serde(skip)]
     pub rare_db_path: Option<PathBuf>,
+}
+
+/// Update settings (the GUI's About tab writes these).
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UpdatesConfig {
+    /// Periodically check GitHub for a newer release (default true). Installs
+    /// only ever happen on an explicit click.
+    #[serde(default)]
+    pub auto_check: Option<bool>,
 }
 
 /// Sound settings (the GUI's Audio tab writes these).

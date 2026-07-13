@@ -28,3 +28,7 @@ image = { version = "0.25", default-features = false, features = ["tga"] }
 tray-icon = "0.21"
 # Native folder picker for the settings window.
 rfd = "0.15"
+# Update checks + downloading release zips from GitHub (blocking, used only on
+# background threads). json = serde_json for the API response.
+ureq = { version = "2", features = ["json"] }
+serde_json = "1"

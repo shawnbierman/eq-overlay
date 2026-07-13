@@ -12,6 +12,7 @@
 #![windows_subsystem = "windows"]
 
 mod app;
+mod updater;
 
 use anyhow::Result;
 use clap::Parser;
@@ -49,6 +50,8 @@ fn main() -> Result<()> {
     .init();
 
     let cli = Cli::parse();
+    // A previous self-update leaves the old binary renamed aside; tidy it.
+    updater::cleanup_old_binary();
     let exe_dir = std::env::current_exe()
         .ok()
         .and_then(|p| p.parent().map(Path::to_path_buf));
@@ -67,9 +70,16 @@ fn main() -> Result<()> {
                 .clone()
                 .unwrap_or_else(|| PathBuf::from("."))
                 .join("config.toml");
-            if write_config_file(&target, &game, 20, 95, 340, 480, 1, "eqov", true, "default")
-                .is_ok()
-            {
+            let defaults = SavedSettings {
+                game: &game,
+                overlay: (20, 95, 340, 480),
+                player_level: 1,
+                command_channel: "eqov",
+                audio_enabled: true,
+                spawn_sound: "default",
+                auto_update: true,
+            };
+            if write_config_file(&target, &defaults).is_ok() {
                 config_path = Some(target);
                 game_dir_autodetected = true;
             }
@@ -120,6 +130,7 @@ fn main() -> Result<()> {
         audio_enabled: true,
         spawn_sound: "default".to_string(),
         zone_respawn: Default::default(),
+        auto_update: true,
     };
 
     if let Some(cfg) = cfg {
@@ -135,6 +146,7 @@ fn main() -> Result<()> {
             info.spawn_sound = s.clone();
         }
         info.zone_respawn = cfg.zone_respawn.clone();
+        info.auto_update = cfg.updates.auto_check.unwrap_or(true);
         info.game_dir = icon_dir
             .as_ref()
             .and_then(|d| d.parent())
@@ -262,20 +274,20 @@ pub(crate) fn is_game_dir(p: &Path) -> bool {
 /// Write a fresh config pointing at `game` — used on first run and by the
 /// settings window. Everything else (spell tracking, death clears, rares.toml
 /// discovery) is automatic, so this is the whole file.
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn write_config_file(
-    path: &Path,
-    game: &Path,
-    x: i32,
-    y: i32,
-    width: u32,
-    height: u32,
-    player_level: u32,
-    command_channel: &str,
-    audio_enabled: bool,
-    spawn_sound: &str,
-) -> std::io::Result<()> {
-    let g = game.display();
+/// Everything the settings window persists, in one place.
+pub(crate) struct SavedSettings<'a> {
+    pub game: &'a Path,
+    pub overlay: (i32, i32, u32, u32),
+    pub player_level: u32,
+    pub command_channel: &'a str,
+    pub audio_enabled: bool,
+    pub spawn_sound: &'a str,
+    pub auto_update: bool,
+}
+
+pub(crate) fn write_config_file(path: &Path, s: &SavedSettings) -> std::io::Result<()> {
+    let g = s.game.display();
+    let (x, y, width, height) = s.overlay;
     let content = format!(
         "# EQ overlay config (generated; the Settings window rewrites this file).\n\
          # Spell tracking, death clears, and rares.toml discovery are automatic.\n\
@@ -284,18 +296,26 @@ pub(crate) fn write_config_file(
          log_dir = '{g}\\Logs'\n\
          icon_dir = '{g}\\uifiles\\default'\n\
          icon_sheet = \"Spells\"\n\
-         player_level = {player_level}\n\
-         command_channel = \"{command_channel}\"\n\
+         player_level = {level}\n\
+         command_channel = \"{channel}\"\n\
          \n\
          [audio]\n\
-         enabled = {audio_enabled}\n\
-         spawn_sound = '{spawn_sound}'\n\
+         enabled = {audio}\n\
+         spawn_sound = '{sound}'\n\
+         \n\
+         [updates]\n\
+         auto_check = {auto}\n\
          \n\
          [overlay]\n\
          x = {x}\n\
          y = {y}\n\
          width = {width}\n\
-         height = {height}\n"
+         height = {height}\n",
+        level = s.player_level,
+        channel = s.command_channel,
+        audio = s.audio_enabled,
+        sound = s.spawn_sound,
+        auto = s.auto_update,
     );
     std::fs::write(path, content)
 }

@@ -58,6 +58,8 @@ pub struct StartupInfo {
     /// Per-zone default respawns (normalized zone -> secs), live-updated by
     /// the in-game `zone` command.
     pub zone_respawn: HashMap<String, u64>,
+    /// Periodically check GitHub for newer releases (config `[updates]`).
+    pub auto_update: bool,
 }
 
 /// If a timer's clear (wear-off) line is missed, drop it this long past its
@@ -238,6 +240,22 @@ pub struct OverlayApp {
     /// The monitor's size in points (from the root viewport), for the
     /// overlay-position picker.
     monitor_size: Option<Vec2>,
+    /// Self-update machinery: settings + background-thread results.
+    auto_update: bool,
+    upd_tx: std::sync::mpsc::Sender<crate::updater::UpdateMsg>,
+    upd_rx: Receiver<crate::updater::UpdateMsg>,
+    update_state: UpdateState,
+    update_checking: bool,
+    last_update_check: Option<Instant>,
+    launched_at: Instant,
+}
+
+enum UpdateState {
+    Idle,
+    UpToDate,
+    Available { version: String, url: String },
+    Busy(String),
+    Failed(String),
 }
 
 #[derive(PartialEq, Clone, Copy)]
@@ -306,6 +324,8 @@ impl OverlayApp {
         tray: Option<Tray>,
         control_tx: Option<std::sync::mpsc::Sender<eq_core::Control>>,
     ) -> Self {
+        let (upd_tx, upd_rx) = std::sync::mpsc::channel();
+        let info2_auto = info.auto_update;
         Self {
             rx,
             timers: Vec::new(),
@@ -333,6 +353,13 @@ impl OverlayApp {
             edit_times: HashMap::new(),
             confirm_remove: None,
             monitor_size: None,
+            auto_update: info2_auto,
+            upd_tx,
+            upd_rx,
+            update_state: UpdateState::Idle,
+            update_checking: false,
+            last_update_check: None,
+            launched_at: Instant::now(),
         }
     }
 
@@ -548,6 +575,50 @@ impl OverlayApp {
         }
     }
 
+    /// Drain update-thread results and schedule periodic checks (10s after
+    /// launch, then every 4 hours — only while the checkbox is on). Installs
+    /// happen only from the button in the About tab.
+    fn poll_updates(&mut self, ctx: &egui::Context) {
+        while let Ok(msg) = self.upd_rx.try_recv() {
+            use crate::updater::UpdateMsg as M;
+            match msg {
+                M::UpToDate => {
+                    self.update_checking = false;
+                    self.last_update_check = Some(Instant::now());
+                    self.update_state = UpdateState::UpToDate;
+                }
+                M::Available { version, url } => {
+                    self.update_checking = false;
+                    self.last_update_check = Some(Instant::now());
+                    self.update_state = UpdateState::Available { version, url };
+                }
+                M::Status(s) => self.update_state = UpdateState::Busy(s),
+                M::Failed(e) => {
+                    self.update_checking = false;
+                    self.last_update_check = Some(Instant::now());
+                    self.update_state = UpdateState::Failed(e);
+                }
+                M::RestartReady => {
+                    // The new exe is already running; bow out.
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                }
+            }
+        }
+
+        if self.auto_update && !self.update_checking {
+            let due = match self.last_update_check {
+                None => self.launched_at.elapsed() > Duration::from_secs(10),
+                Some(t) => t.elapsed() > Duration::from_secs(4 * 60 * 60),
+            };
+            let already_found =
+                matches!(self.update_state, UpdateState::Available { .. } | UpdateState::Busy(_));
+            if due && !already_found {
+                self.update_checking = true;
+                crate::updater::spawn_check(self.upd_tx.clone(), ctx.clone());
+            }
+        }
+    }
+
     /// React to tray-menu / tray-icon events (Settings…, Quit, left-click).
     fn poll_tray(&mut self, ctx: &egui::Context) {
         let Some(t) = &self.tray else { return };
@@ -748,7 +819,7 @@ impl OverlayApp {
             Tab::Spells => self.tab_spells(ui),
             Tab::Audio => self.tab_audio(ui),
             Tab::Setup => self.tab_setup(ui, ctx),
-            Tab::About => self.tab_about(ui),
+            Tab::About => self.tab_about(ui, ctx),
         }
     }
 
@@ -1379,24 +1450,21 @@ impl OverlayApp {
         let Some(gd) = self.pending_game_dir.as_ref().or(self.info.game_dir.as_ref()) else {
             return; // first-run without a game dir: nothing sensible to write yet
         };
-        let (x, y, w, h) = self.info.overlay;
-        if let Err(e) = crate::write_config_file(
-            &self.info.config_save_path,
-            gd,
-            x,
-            y,
-            w,
-            h,
-            self.level.unwrap_or(1),
-            &self.info.command_channel,
-            self.audio_enabled,
-            &self.spawn_sound,
-        ) {
+        let s = crate::SavedSettings {
+            game: gd,
+            overlay: self.info.overlay,
+            player_level: self.level.unwrap_or(1),
+            command_channel: &self.info.command_channel,
+            audio_enabled: self.audio_enabled,
+            spawn_sound: &self.spawn_sound,
+            auto_update: self.auto_update,
+        };
+        if let Err(e) = crate::write_config_file(&self.info.config_save_path, &s) {
             log::error!("failed to write {}: {e}", self.info.config_save_path.display());
         }
     }
 
-    fn tab_about(&self, ui: &mut egui::Ui) {
+    fn tab_about(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         let dim = DIM;
         ui.add_space(8.0);
         ui.horizontal(|ui| {
@@ -1445,6 +1513,55 @@ impl OverlayApp {
             ui.end_row();
         });
         ui.add_space(8.0);
+        ui.separator();
+        ui.label(RichText::new("Updates").color(INK).strong().size(12.5));
+        if ui
+            .checkbox(&mut self.auto_update, "Check for updates automatically")
+            .changed()
+        {
+            self.persist_config();
+        }
+        ui.horizontal(|ui| {
+            match &self.update_state {
+                UpdateState::Idle => {
+                    ui.colored_label(dim, "not checked yet this session");
+                }
+                UpdateState::UpToDate => {
+                    ui.colored_label(dim, "up to date");
+                }
+                UpdateState::Busy(s) => {
+                    ui.colored_label(dim, s.as_str());
+                }
+                UpdateState::Failed(e) => {
+                    ui.colored_label(WARN, e.as_str());
+                }
+                UpdateState::Available { version, .. } => {
+                    ui.colored_label(
+                        ACCENT,
+                        RichText::new(format!("{version} is available!")).strong(),
+                    );
+                }
+            }
+            if let UpdateState::Available { url, .. } = &self.update_state {
+                let url = url.clone();
+                if ui.button("Update & Restart").clicked() {
+                    self.update_state = UpdateState::Busy("starting…".into());
+                    crate::updater::spawn_install(url, self.upd_tx.clone(), ctx.clone());
+                }
+            } else if !matches!(self.update_state, UpdateState::Busy(_))
+                && ui.small_button("Check now").clicked()
+                && !self.update_checking
+            {
+                self.update_checking = true;
+                crate::updater::spawn_check(self.upd_tx.clone(), ctx.clone());
+            }
+        });
+        ui.colored_label(
+            dim,
+            "Updates come from the GitHub releases page. Your settings and rare database are never touched.",
+        );
+
+        ui.add_space(8.0);
         ui.label(
             RichText::new(
                 "Spell data, durations, and icons come from the game's own files. \
@@ -1461,24 +1578,20 @@ impl OverlayApp {
         let Some(gd) = self.pending_game_dir.as_ref().or(self.info.game_dir.as_ref()) else {
             return;
         };
-        let (x, y, w, h) = self.info.overlay;
-        let lvl = self.level.unwrap_or(1);
         let chan = {
             let t = self.channel_edit.trim();
             if t.is_empty() { "eqov" } else { t }
         };
-        if let Err(e) = crate::write_config_file(
-            &self.info.config_save_path,
-            gd,
-            x,
-            y,
-            w,
-            h,
-            lvl,
-            chan,
-            self.audio_enabled,
-            &self.spawn_sound,
-        ) {
+        let s = crate::SavedSettings {
+            game: gd,
+            overlay: self.info.overlay,
+            player_level: self.level.unwrap_or(1),
+            command_channel: chan,
+            audio_enabled: self.audio_enabled,
+            spawn_sound: &self.spawn_sound,
+            auto_update: self.auto_update,
+        };
+        if let Err(e) = crate::write_config_file(&self.info.config_save_path, &s) {
             log::error!("failed to write {}: {e}", self.info.config_save_path.display());
             return;
         }
@@ -1504,6 +1617,7 @@ impl eframe::App for OverlayApp {
             self.monitor_size = Some(m);
         }
         self.poll_tray(ctx);
+        self.poll_updates(ctx);
         self.ingest();
         self.settings_window(ctx);
 
