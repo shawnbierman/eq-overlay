@@ -1270,12 +1270,14 @@ impl OverlayApp {
         p.rect_filled(screen, Rounding::ZERO, Color32::from_rgb(24, 27, 33));
         p.rect_stroke(screen, Rounding::ZERO, Stroke::new(1.0, INK));
 
-        // The nine candidate desktop positions (margins keep it off the very
-        // edge; extra at the bottom clears the taskbar).
-        const M: f32 = 24.0;
+        // The nine candidate desktop positions. Margins keep it off the very
+        // edge; the top row clears EQ's FPS/latency readout, the bottom row
+        // clears the taskbar.
+        const M_SIDE: f32 = 24.0;
+        const M_TOP: f32 = 56.0;
         const M_BOTTOM: f32 = 56.0;
-        let xs = [M, ((mon.x - ow) / 2.0).max(M), (mon.x - ow - M).max(M)];
-        let ys = [M, ((mon.y - oh) / 2.0).max(M), (mon.y - oh - M_BOTTOM).max(M)];
+        let xs = [M_SIDE, ((mon.x - ow) / 2.0).max(M_SIDE), (mon.x - ow - M_SIDE).max(M_SIDE)];
+        let ys = [M_TOP, ((mon.y - oh) / 2.0).max(M_TOP), (mon.y - oh - M_BOTTOM).max(M_TOP)];
 
         // Which anchor is the overlay closest to right now?
         let (cx, cy) = (self.info.overlay.0 as f32, self.info.overlay.1 as f32);
