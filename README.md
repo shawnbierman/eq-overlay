@@ -29,7 +29,7 @@ Done. It finds your EQ install by itself and lives in the system tray (🕐 yell
 
 ## What you get
 
-- 🪄 **A bar for every debuff you land** — mez, slow, root, DoT… with the real spell icons and level-correct durations, straight from the game's own data. Cast it, see it. Zero setup.
+- 🪄 **A bar for every debuff you land** — mez, slow, root, DoT… with the real spell icons and level-correct durations, straight from the game's own data. Bars **con like mobs**: green while safe, yellow when short, red when about to break. Cast it, see it. Zero setup.
 - ⏰ **Rare respawn timers** — kill a named, type `add`, and a countdown clock starts. It **chimes and flashes** when the rare is due, and respawn times calibrate themselves as you camp.
 - 🤝 **A shared database** — everyone in the `eqov` chat channel gets each other's named adds, live. The file (`rares.toml`) is plain text you can trade around too.
 - 📊 **Zone + live DPS** in a little BeOS-style tab. The overlay never eats your mouse clicks.

@@ -1764,7 +1764,11 @@ impl eframe::App for OverlayApp {
                     // Slot background.
                     painter.rect_filled(rect, round, Color32::from_rgba_unmultiplied(8, 10, 14, 228));
 
-                    // Depleting fill: category colour, or red in the last 5s.
+                    // Depleting fill. Spell bars CON like mobs do — green while
+                    // safe, blue as it runs down, yellow when short, red when
+                    // it's about to break — the one color language every EQ
+                    // player reads instinctively. (Identity lives in the gem
+                    // icon, the name, and the category stripe below.)
                     let fill_w = ((w - 2.0) * frac).max(0.0);
                     if fill_w > 0.0 {
                         let fill = Rect::from_min_size(rect.min + Vec2::new(1.0, 1.0), Vec2::new(fill_w, slot_h - 2.0));
@@ -1775,12 +1779,36 @@ impl eframe::App for OverlayApp {
                         } else if is_respawn {
                             Color32::from_rgb(212, 166, 46) // respawning = gold
                         } else if expiring {
-                            Color32::from_rgb(200, 66, 58)
+                            Color32::from_rgb(200, 66, 58) // cons red: handle it NOW
+                        } else if frac > 0.55 {
+                            Color32::from_rgb(84, 158, 74) // cons green: relax
+                        } else if frac > 0.30 {
+                            Color32::from_rgb(64, 102, 190) // cons blue: fine for now
                         } else {
-                            cat.color
+                            Color32::from_rgb(196, 168, 52) // cons yellow: soon
                         };
                         let alpha = if flash { 225 } else { 160 };
                         painter.rect_filled(fill, round, Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), alpha));
+                    }
+
+                    // Category identity: a slim stripe on the left edge (mez
+                    // purple, slow blue, root brown, ... — same colours as the
+                    // fallback icon squares).
+                    if !is_respawn {
+                        let stripe = Rect::from_min_size(
+                            rect.min + Vec2::new(1.0, 1.0),
+                            Vec2::new(3.0, slot_h - 2.0),
+                        );
+                        painter.rect_filled(
+                            stripe,
+                            Rounding::ZERO,
+                            Color32::from_rgba_unmultiplied(
+                                cat.color.r(),
+                                cat.color.g(),
+                                cat.color.b(),
+                                230,
+                            ),
+                        );
                     }
 
                     // Icon: real game gem if we have it, else a colour-coded square.
