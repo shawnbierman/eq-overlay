@@ -12,6 +12,7 @@
 #![windows_subsystem = "windows"]
 
 mod app;
+mod shortcuts;
 mod updater;
 
 use anyhow::Result;

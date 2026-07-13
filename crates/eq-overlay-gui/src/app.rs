@@ -249,6 +249,11 @@ pub struct OverlayApp {
     update_checking: bool,
     last_update_check: Option<Instant>,
     launched_at: Instant,
+    /// "Start with Windows" state (a Startup-folder shortcut exists), read once
+    /// at launch and toggled from the Setup tab.
+    run_at_login: bool,
+    /// Transient one-line result of the last shortcut action (Setup tab).
+    shortcut_note: String,
 }
 
 enum UpdateState {
@@ -361,6 +366,8 @@ impl OverlayApp {
             update_checking: false,
             last_update_check: None,
             launched_at: Instant::now(),
+            run_at_login: crate::shortcuts::run_at_login_enabled(),
+            shortcut_note: String::new(),
         }
     }
 
@@ -1278,9 +1285,52 @@ impl OverlayApp {
             self.save_and_restart(ctx);
         }
 
+        // ── Launching: this is a portable app (no installer), so give it a
+        //    Desktop shortcut and/or a start-with-Windows entry on request.
+        ui.add_space(8.0);
+        ui.separator();
+        ui.label(RichText::new("Launching").color(INK).strong().size(12.5));
+        ui.horizontal(|ui| {
+            if ui.button("Create desktop shortcut").clicked() {
+                self.shortcut_note = match crate::shortcuts::create_desktop_shortcut() {
+                    Ok(()) => "Added \"EQ Overlay\" to your Desktop.".into(),
+                    Err(e) => format!("Couldn't create it: {e}"),
+                };
+            }
+            let cb = ui.checkbox(&mut self.run_at_login, "Start with Windows").on_hover_text(
+                "Launch on login and sit in the tray, so it's always ready while you play.",
+            );
+            if cb.changed() {
+                match crate::shortcuts::set_run_at_login(self.run_at_login) {
+                    Ok(()) => {
+                        self.shortcut_note = if self.run_at_login {
+                            "Will start automatically with Windows (lives in the tray).".into()
+                        } else {
+                            "Won't start automatically anymore.".into()
+                        };
+                    }
+                    Err(e) => {
+                        self.run_at_login = !self.run_at_login; // revert on failure
+                        self.shortcut_note = format!("Couldn't change that: {e}");
+                    }
+                }
+            }
+        });
+        if !self.shortcut_note.is_empty() {
+            cell_wrap(ui, 316.0, RichText::new(self.shortcut_note.as_str()).size(10.5).color(dim));
+        }
+
         ui.add_space(6.0);
         ui.separator();
         ui.colored_label(dim, format!("Config file: {}", self.info.config_save_path.display()));
+        if let Ok(exe) = std::env::current_exe() {
+            cell_line(
+                ui,
+                316.0,
+                RichText::new(format!("App folder: {}", exe.display())).size(10.5).color(dim),
+                Some(exe.display().to_string()),
+            );
+        }
         ui.label(
             RichText::new("Everything else is automatic: spell tracking, death clears, level scaling, and the rares database.")
                 .size(10.5)
