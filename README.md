@@ -46,7 +46,7 @@ Prefer clicking? The **Rares tab** in Settings does the same — recent kills, o
 ## What you get
 
 - 🪄 **A bar for every debuff you land** — mez, slow, root, DoT… with the real spell icons and level-correct durations, straight from the game's own data. Bars **con like mobs**: green while safe, yellow when short, red when about to break. Cast it, see it. Zero setup.
-- ⏰ **Rare respawn timers** — target a named, type `remember %T`, and a countdown clock starts. It **chimes and flashes** when the rare is due, and respawn times calibrate themselves as you camp.
+- ⏰ **Rare respawn timers** — one button on a named starts a countdown clock. It **chimes and flashes** when the rare is due, and respawn times calibrate themselves as you camp.
 - 🤝 **A portable database** — your rares live in `rares.toml`, plain text you can hand to a friend or fold into the shared list that ships with each release. Commands are **private to you** — nobody else can edit your list.
 - 📊 **Zone + live DPS** in a little BeOS-style tab. The overlay never eats your mouse clicks.
 
