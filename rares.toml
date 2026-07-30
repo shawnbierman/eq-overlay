@@ -47,13 +47,6 @@ respawn_seconds = 300
 notes = "added in-game 2026-07-12"
 
 [[rare]]
-name = "ghoul assassin"
-zone = "The Ruins of Old Guk"
-respawn_seconds = 660
-notes = "added in-game 2026-07-12"
-
-
-[[rare]]
 name = "a frenzied ghoul"
 zone = "The Ruins of Old Guk"
 respawn_seconds = 660
@@ -65,3 +58,19 @@ notes = "11 min, set by hand 2026-07-12"
 
 
 
+
+
+
+
+[[rare]]
+name = "ghoul assassin"
+zone = "The Ruins of Old Guk 2 (Adaptive)"
+respawn_seconds = 660
+notes = "added in-game 2026-07-13"
+
+
+[[rare]]
+name = "a ghoul supplier"
+zone = "The Ruins of Old Guk 2 (Adaptive)"
+respawn_seconds = 660
+notes = "added in-game 2026-07-13"

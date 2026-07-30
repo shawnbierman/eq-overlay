@@ -404,9 +404,11 @@ impl OverlayApp {
                         // (count unchanged), and EQ will log a spurious "worn
                         // off" for the replaced instance in ~a second — arm the
                         // swallow so it can't kill the freshly refreshed bar.
-                        // (Respawn: just a re-kill — restart, no counting.)
+                        // (Respawn: just a re-kill — restart, no counting. Buff:
+                        // always a single instance on you — refresh, never count.)
+                        let is_buff = t.key.starts_with("buff:");
                         if !is_respawn {
-                            if x.started_at.elapsed() < VOLLEY_WINDOW {
+                            if !is_buff && x.started_at.elapsed() < VOLLEY_WINDOW {
                                 x.count += 1;
                             } else {
                                 x.swallow_until = Some(Instant::now() + REFRESH_FADE_SWALLOW);
@@ -510,7 +512,9 @@ impl OverlayApp {
                     let owner = target.to_lowercase();
                     let before = self.timers.len();
                     self.timers.retain(|x| {
-                        if x.key.starts_with("respawn:") {
+                        // Respawn timers are STARTED by a death, never cleared by
+                        // one; buff bars are on YOU, not the dead mob — skip both.
+                        if x.key.starts_with("respawn:") || x.key.starts_with("buff:") {
                             return true;
                         }
                         let tgt = x.key.splitn(2, ':').nth(1).unwrap_or_default().to_lowercase();
@@ -519,18 +523,27 @@ impl OverlayApp {
                     changed |= self.timers.len() != before;
                 }
                 EngineEvent::Zone { name } => {
-                    // Zoning is a clean slate: every live timer references a mob
-                    // in the zone you just left — debuffs on those mobs, and
-                    // rare-respawn countdowns for that specific zone/instance.
-                    // None carry over (mobs don't follow you across a zone line;
-                    // a fresh instance spawns its rares up), so drop them all.
-                    // Without this a respawn timer's 30-min grace keeps a stale
-                    // countdown on screen in a brand-new instance where the rare
-                    // is already standing there. (Harmless at startup: the
-                    // pipeline's initial Zone event arrives before any timers.)
-                    self.timers.clear();
+                    // Zoning is a clean slate for everything tied to the zone you
+                    // left: debuffs on mobs there, and rare-respawn countdowns for
+                    // that specific instance. None carry over (mobs don't follow
+                    // you across a zone line; a fresh instance spawns its rares
+                    // up). Your BUFFS do follow you, though — they don't drop on
+                    // zoning — so those bars are kept and only non-buff timers are
+                    // dropped. Without this a respawn timer's 30-min grace keeps a
+                    // stale countdown in a brand-new instance where the rare is
+                    // already standing there. (Harmless at startup: the pipeline's
+                    // initial Zone event arrives before any timers exist.)
+                    self.timers.retain(|t| t.key.starts_with("buff:"));
                     self.zone = name;
                     changed = true;
+                }
+                EngineEvent::PlayerDied => {
+                    // Death drops every buff at once (classic rules), with no
+                    // per-buff fade line — so wipe the buff bars here. Debuff and
+                    // respawn bars are left to their own clear lines.
+                    let before = self.timers.len();
+                    self.timers.retain(|t| !t.key.starts_with("buff:"));
+                    changed |= self.timers.len() != before;
                 }
                 EngineEvent::Damage { amount } => {
                     self.dmg.push((Instant::now(), amount));
@@ -583,10 +596,11 @@ impl OverlayApp {
         });
         changed |= self.timers.len() != before;
 
-        // Debuffs first, most urgent (least remaining) on top; spawn timers
-        // below. Only on change — the order can't drift on its own.
+        // Group into sections — debuffs, then buffs, then spawn timers — and
+        // within each, most urgent (least remaining) on top. Only on change: the
+        // order can't drift on its own.
         if changed {
-            self.timers.sort_by_key(|t| (t.key.starts_with("respawn:"), t.remaining()));
+            self.timers.sort_by_key(|t| (section_rank(&t.key), t.remaining()));
         }
     }
 
@@ -1841,19 +1855,51 @@ impl eframe::App for OverlayApp {
 
                 let slot_h = 26.0;
                 let gap = 3.0;
-                // Extra vertical space between the spell section (top) and the
-                // spawn-timer section (bottom). The sort already groups them.
+                // Breathing room between sections (the sort already groups them).
                 let section_gap = 9.0;
                 let isz = 20.0;
                 let uv = Rect::from_min_max(Pos2::new(0.0, 0.0), Pos2::new(1.0, 1.0));
 
-                let mut prev_respawn = None;
+                // Walk the section-sorted bars, dropping a small chip header above
+                // the FIRST bar of each section — DOTS, then BUFFS, then TIMERS. A
+                // section with no bars gets no chip (one is emitted only when that
+                // section's first bar appears), so the header set self-hides.
+                let mut prev_section: Option<u8> = None;
                 for t in &self.timers {
                     let is_respawn = t.key.starts_with("respawn:");
-                    if prev_respawn == Some(false) && is_respawn {
-                        y += section_gap;
+                    let section = section_rank(&t.key);
+                    if prev_section != Some(section) {
+                        if prev_section.is_some() {
+                            y += section_gap;
+                        }
+                        let (label, accent) = section_chip(section);
+                        let chip_font = FontId::proportional(9.0);
+                        let lw = ctx.fonts(|f| {
+                            f.layout_no_wrap(label.to_owned(), chip_font.clone(), Color32::WHITE)
+                                .size()
+                                .x
+                        });
+                        let chip = Rect::from_min_size(Pos2::new(x, y), Vec2::new(lw + 20.0, 13.0));
+                        painter.rect_filled(
+                            chip,
+                            Rounding::same(6.5),
+                            Color32::from_rgba_unmultiplied(12, 14, 18, 205),
+                        );
+                        painter.circle_filled(
+                            Pos2::new(chip.min.x + 8.0, chip.center().y),
+                            2.0,
+                            accent,
+                        );
+                        painter.text(
+                            Pos2::new(chip.min.x + 14.0, chip.center().y + 0.5),
+                            Align2::LEFT_CENTER,
+                            label,
+                            chip_font,
+                            Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 235),
+                        );
+                        y += 15.0;
                     }
-                    prev_respawn = Some(is_respawn);
+                    prev_section = Some(section);
 
                     let rect = Rect::from_min_size(Pos2::new(x, y), Vec2::new(w, slot_h));
                     let (name, tag) = split_label(&t.label);
@@ -2085,10 +2131,34 @@ fn category(tag: &str) -> Cat {
         "Numb" => (128, 122, 168, "Nb"),
         "Choke" => (72, 142, 96, "Ck"),
         "Debuff" => (192, 88, 82, "Db"),
+        "Buff" => (104, 190, 148, "Bf"), // a buff on you (beneficial)
         "Spawn" => (212, 166, 46, "R"), // rare respawn timer
         _ => (132, 132, 148, "•"),
     };
     Cat { color: Color32::from_rgb(r, g, b), abbr }
+}
+
+/// Which display section a timer belongs to: 0 = debuffs you land on mobs,
+/// 1 = your own buffs, 2 = rare respawn timers. Drives the sort order and the
+/// section chips (DOTS / BUFFS / TIMERS).
+fn section_rank(key: &str) -> u8 {
+    if key.starts_with("respawn:") {
+        2
+    } else if key.starts_with("buff:") {
+        1
+    } else {
+        0
+    }
+}
+
+/// The chip label + accent colour that heads a section. The accent matches the
+/// bars' own category stripe, so a chip reads as the header of the bars beneath.
+fn section_chip(rank: u8) -> (&'static str, Color32) {
+    match rank {
+        1 => ("BUFFS", category("Buff").color),
+        2 => ("TIMERS", category("Spawn").color),
+        _ => ("DOTS", category("Debuff").color),
+    }
 }
 
 /// Split "orc centurion [Slow]" into ("orc centurion", "Slow").
@@ -2117,7 +2187,7 @@ fn is_pet_of(candidate: &str, owner: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::is_pet_of;
+    use super::{is_pet_of, section_chip, section_rank};
 
     #[test]
     fn matches_owner_pets_but_not_lookalikes() {
@@ -2128,6 +2198,21 @@ mod tests {
         assert!(!is_pet_of("the thaumaturgist warlord", "the thaumaturgist"));
         assert!(!is_pet_of("a skeleton knight", "a skeleton"));
         assert!(!is_pet_of("the thaumaturgist", "the thaumaturgist"));
+    }
+
+    #[test]
+    fn sections_order_and_label_dots_buffs_timers() {
+        // Debuff keys (spell:target) rank 0, then buffs, then respawn timers —
+        // the top-to-bottom order the sort and the chips both rely on.
+        assert_eq!(section_rank("Tashani:a priest"), 0);
+        assert_eq!(section_rank("buff:Spirit of Wolf"), 1);
+        assert_eq!(section_rank("respawn:ghoul assassin"), 2);
+        assert!(section_rank("mez:orc") < section_rank("buff:x"));
+        assert!(section_rank("buff:x") < section_rank("respawn:y"));
+
+        assert_eq!(section_chip(0).0, "DOTS");
+        assert_eq!(section_chip(1).0, "BUFFS");
+        assert_eq!(section_chip(2).0, "TIMERS");
     }
 }
 

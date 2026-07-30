@@ -152,6 +152,9 @@ fn tail(
                 None => println!("          [ZONE = ] {zone} default respawn cleared"),
             },
             Ok(EngineEvent::Damage { .. }) => {} // summed by the GUI; too noisy to print
+            Ok(EngineEvent::PlayerDied) => {
+                println!("          [DIED   ] you died — buffs cleared");
+            }
             Err(RecvTimeoutError::Timeout) => {
                 if deadline.is_some() {
                     break;

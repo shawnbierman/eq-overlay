@@ -43,6 +43,10 @@ pub enum EngineEvent {
     /// The player dealt `amount` damage (melee, direct spell, or DoT tick). The
     /// overlay sums these over a rolling window for a live DPS readout.
     Damage { amount: u64 },
+    /// The player died. On this server (classic rules) death drops every buff,
+    /// with no per-buff fade line — so the overlay wipes all `buff:` bars at
+    /// once. (Debuff/respawn bars are cleared by their own lines, not this.)
+    PlayerDied,
 }
 
 #[derive(Debug, Clone)]

@@ -129,7 +129,7 @@ pub fn spawn_pipeline_with_control(
 
     // Startup status (stdout, alongside the caller's banner).
     match &spell_db {
-        Some(db) => println!("  spells  {} detrimental spells auto-tracked", db.len()),
+        Some(db) => println!("  spells  {} spells auto-tracked (debuffs + buffs)", db.len()),
         None => println!("  spells  auto-tracking OFF (spell files not found)"),
     }
     println!("  rares   {} tracked for respawn timers", rares.len());
@@ -263,6 +263,19 @@ fn run(
     // claimed as ours (standard practice: nparse/EQTool cancel pending on these).
     let castfail_re = Regex::new(r"^Your (?:.+? )?spell (?:is interrupted\.|fizzles!)")
         .expect("valid cast-fail regex");
+
+    // A buff faded from YOU via the generic wear-off line (no target). The debuff
+    // `wornoff_re` above requires "...worn off OF <target>."; this is the
+    // self/buff variant "Your <Spell> spell has worn off." with nothing after.
+    // The spell-specific fade line ("The spirit of wolf leaves you.") is matched
+    // separately against the DB; this catches buffs whose fade the client logs
+    // only in the generic form.
+    let self_wornoff_re =
+        Regex::new(r"^Your (.+?) spell has worn off\.\s*$").expect("valid self wear-off regex");
+    // Player death. On this server death drops every buff with no per-buff fade
+    // line, so it wipes the buff bars wholesale. Matches "You have been slain
+    // by <killer>!" and the plain "You died." forms.
+    let died_re = Regex::new(r"^You (?:have been slain|died)\b").expect("valid death regex");
 
     // Your own damage output, for the DPS meter: melee + direct spells ("You
     // slash X for N points of ... damage") and DoT ticks ("X has taken N damage
@@ -415,11 +428,14 @@ fn run(
                 // back to the land message alone — the cast may not have been seen
                 // (overlay launched mid-fight, or the cast line was missed).
                 let landed: Option<SpellInfo> = if let Some(idx) = pending.iter().position(|(info, _)| {
-                    parsed
-                        .message
-                        .strip_suffix(&info.land_suffix)
-                        .map(|t| !t.trim().is_empty() && t != "You")
-                        .unwrap_or(false)
+                    // Buffs land on you, not a target — resolved separately below.
+                    // (Their land_suffix is empty, which would match every line.)
+                    !info.beneficial
+                        && parsed
+                            .message
+                            .strip_suffix(&info.land_suffix)
+                            .map(|t| !t.trim().is_empty() && t != "You")
+                            .unwrap_or(false)
                 }) {
                     Some(pending.remove(idx).0)
                 } else {
@@ -459,6 +475,42 @@ fn run(
                         }
                     }
                 }
+
+                // --- your buffs: a beneficial spell landed on YOU ---
+                // Self-cast resolves from the armed cast (exact — handles buffs
+                // whose self-land line is shared by several spells); a buff cast
+                // on you by someone else resolves from that line alone, but only
+                // when it's unique to one buff (`match_self_land`). A full-line
+                // match, so ordinary combat text can't start a bar.
+                let buff: Option<SpellInfo> = pending
+                    .iter()
+                    .position(|(info, _)| {
+                        info.beneficial
+                            && !info.self_land.is_empty()
+                            && parsed.message.trim() == info.self_land.trim()
+                    })
+                    .map(|idx| pending.remove(idx).0)
+                    .or_else(|| db.match_self_land(&parsed.message).cloned());
+                if let Some(info) = buff {
+                    let secs = duration_seconds(player_level as i64, info.formula, info.base);
+                    if secs > 0
+                        && send(
+                            &events_tx,
+                            EngineEvent::Timer(TimerEvent {
+                                key: format!("buff:{}", info.name),
+                                trigger: String::new(), // the bar shows the buff name itself
+                                icon: info.icon,
+                                label: format!("{} [Buff]", info.name),
+                                duration: Duration::from_secs(secs),
+                                started_at: Instant::now(),
+                                started_wall: Local::now(),
+                            }),
+                        )
+                        .is_none()
+                    {
+                        return Ok(());
+                    }
+                }
             }
 
             // A spell wore off a target — clear its bar (works for any spell).
@@ -492,6 +544,34 @@ fn run(
                 if send(&events_tx, EngineEvent::ClearTimer { key }).is_none() {
                     return Ok(());
                 }
+            }
+
+            // A buff faded from YOU — clear its bar. The spell-specific fade line
+            // ("The spirit of wolf leaves you.") can be shared across a rank
+            // family, so clear every candidate name (only the active bar matches;
+            // the rest are no-ops). The generic no-target "Your <Spell> spell has
+            // worn off." names its spell exactly.
+            let mut fade_names: Vec<String> = spell_db
+                .as_ref()
+                .map(|db| db.match_self_fade(&parsed.message).to_vec())
+                .unwrap_or_default();
+            if let Some(c) = self_wornoff_re.captures(&parsed.message) {
+                fade_names.push(c[1].trim().to_string());
+            }
+            for name in fade_names {
+                if send(&events_tx, EngineEvent::ClearTimer { key: format!("buff:{name}") })
+                    .is_none()
+                {
+                    return Ok(());
+                }
+            }
+
+            // Player death wipes every buff at once (classic rules: no per-buff
+            // fade line on death). Debuff/respawn bars are untouched.
+            if died_re.is_match(&parsed.message)
+                && send(&events_tx, EngineEvent::PlayerDied).is_none()
+            {
+                return Ok(());
             }
 
             // A mez was broken by damage (explicit break line).

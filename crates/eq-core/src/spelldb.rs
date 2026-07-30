@@ -6,11 +6,17 @@
 //! Two `^`-delimited files (found next to `uifiles/`), joined by spell id:
 //!   `spells_us.txt`     — [0]=id [1]=name [11]=duration formula [12]=base ticks
 //!                         [28]=goodEffect (0=detrimental, 1/2=beneficial) [75]=icon
-//!   `spells_us_str.txt` — [0]=id [4]=CASTEDOTHERTXT (the text appended after the
-//!                         target when the spell lands, e.g. " has been mesmerized.")
+//!   `spells_us_str.txt` — [0]=id [3]=CASTEDMETXT (shown when it lands on YOU,
+//!                         e.g. "You feel strong.") [4]=CASTEDOTHERTXT (appended
+//!                         after the target on land, " has been mesmerized.")
+//!                         [5]=WOROFFMETXT (shown when it fades from YOU,
+//!                         "Your strength fades.")
 //!
-//! We keep only *detrimental* spells that land on a target and have a duration —
-//! the ones worth a countdown bar.
+//! We keep two kinds of durationed spell, each worth a countdown bar:
+//!   * *detrimental* spells that land on a target — keyed off the CASTEDOTHERTXT
+//!     land line (`<target> has been mesmerized.`); the debuff bars on mobs.
+//!   * *beneficial* buffs that land on YOU — keyed off the CASTEDMETXT self-land
+//!     line and cleared by the WOROFFMETXT self-fade line; the buff bars on you.
 
 use anyhow::{Context, Result};
 use std::collections::{HashMap, HashSet};
@@ -26,14 +32,36 @@ pub struct SpellInfo {
     pub base: i64,
     /// Spell icon index (field [75]) into the `SpellsNN.tga` sheets.
     pub icon: Option<u32>,
-    /// Text appended after the target on landing, e.g. " has been mesmerized.".
-    /// The land line is exactly `"<target>" + land_suffix`.
+    /// Detrimental spells only: text appended after the target on landing, e.g.
+    /// " has been mesmerized." The land line is exactly `"<target>" + land_suffix`.
+    /// Empty for buffs — they land on you, matched via `self_land` instead.
     pub land_suffix: String,
+    /// True for beneficial buffs. Buffs are tracked on YOU (self_land/self_fade)
+    /// and MUST never be matched through `land_suffix` — a buff's suffix is empty,
+    /// which would otherwise match every line. Callers key off this flag.
+    pub beneficial: bool,
+    /// Buffs only: the whole line shown when this buff lands on YOU, e.g.
+    /// "You feel strong." (spells_us_str.txt field [3]). Empty for debuffs.
+    pub self_land: String,
+    /// Buffs only: the whole line shown when this buff fades from YOU, e.g.
+    /// "Your strength fades." (field [5]). Empty for debuffs.
+    pub self_fade: String,
 }
 
 #[derive(Debug, Default)]
 pub struct SpellDb {
     by_name: HashMap<String, SpellInfo>,
+    /// self-land line -> a representative buff name: the lowest spell id sharing
+    /// the line, which is the classic base (e.g. "Clarity" for the whole mana-regen
+    /// family). Lets a buff cast on you by someone else (no cast of ours to arm)
+    /// start a bar from its land line alone. The exact rank isn't known this way,
+    /// but a self-cast resolves it precisely via the armed cast, and the fade line
+    /// clears it regardless.
+    by_self_land: HashMap<String, String>,
+    /// self-fade line -> every buff name that uses it. A fade clears whichever of
+    /// those bars is up (the rest are no-ops), so fade lines shared across a rank
+    /// family still clear correctly.
+    by_self_fade: HashMap<String, Vec<String>>,
 }
 
 impl SpellDb {
@@ -57,6 +85,11 @@ impl SpellDb {
         let mut best: Option<&SpellInfo> = None;
         for name in cast_history {
             let Some(info) = self.by_name.get(name) else { continue };
+            // Buffs never resolve here: their land_suffix is empty (`strip_suffix`
+            // would match every line) and they land on you, not a target.
+            if info.beneficial {
+                continue;
+            }
             let lands = msg
                 .strip_suffix(info.land_suffix.as_str())
                 .map(|t| {
@@ -78,6 +111,21 @@ impl SpellDb {
         best
     }
 
+    /// Resolve a buff from its self-land line ("You feel strong.") alone — for a
+    /// buff someone else cast on YOU, where there's no cast of ours to arm. Only
+    /// lines unique to one buff resolve (see `by_self_land`); a full-line exact
+    /// match, so ordinary combat text can't trip it.
+    pub fn match_self_land(&self, msg: &str) -> Option<&SpellInfo> {
+        let name = self.by_self_land.get(msg.trim())?;
+        self.by_name.get(name)
+    }
+
+    /// Every buff name whose self-fade line ("Your strength fades.") is this line
+    /// (empty if none) — so the overlay can clear whichever of those bars is up.
+    pub fn match_self_fade(&self, msg: &str) -> &[String] {
+        self.by_self_fade.get(msg.trim()).map(Vec::as_slice).unwrap_or(&[])
+    }
+
     pub fn len(&self) -> usize {
         self.by_name.len()
     }
@@ -87,28 +135,35 @@ impl SpellDb {
 
     /// Load + join the two spell files.
     pub fn load(db_path: &Path, str_path: &Path) -> Result<Self> {
-        // id -> land suffix (CASTEDOTHERTXT), from the string file.
+        // id -> (self-land [3], other-land [4], self-fade [5]) from the string
+        // file. Detrimental bars key off other-land; buff bars off self-land/fade.
         let str_text = std::fs::read_to_string(str_path)
             .with_context(|| format!("reading {}", str_path.display()))?;
-        let mut land: HashMap<i64, String> = HashMap::new();
+        let mut strings: HashMap<i64, (String, String, String)> = HashMap::new();
         for line in str_text.lines() {
             if line.starts_with('#') {
                 continue; // header
             }
             let f: Vec<&str> = line.split('^').collect();
-            if f.len() > 4 {
-                if let Ok(id) = f[0].parse::<i64>() {
-                    let suffix = f[4];
-                    if !suffix.trim().is_empty() {
-                        land.insert(id, suffix.to_string());
-                    }
-                }
+            if f.len() <= 4 {
+                continue;
+            }
+            if let Ok(id) = f[0].parse::<i64>() {
+                let self_land = f[3].to_string();
+                let other_land = f[4].to_string();
+                let self_fade = f.get(5).map(|s| s.to_string()).unwrap_or_default();
+                strings.insert(id, (self_land, other_land, self_fade));
             }
         }
 
         let db_text = std::fs::read_to_string(db_path)
             .with_context(|| format!("reading {}", db_path.display()))?;
         let mut by_name: HashMap<String, SpellInfo> = HashMap::new();
+        // Buff line indices, accumulated across every beneficial row (all ranks,
+        // not just the one kept in `by_name`): self-land -> (lowest id, its name)
+        // for a representative label, and self-fade -> all names that use it.
+        let mut land_rep: HashMap<String, (i64, String)> = HashMap::new();
+        let mut fade_cands: HashMap<String, Vec<String>> = HashMap::new();
         for line in db_text.lines() {
             let f: Vec<&str> = line.split('^').collect();
             if f.len() <= 75 {
@@ -122,34 +177,77 @@ impl SpellDb {
             if name.is_empty() {
                 continue;
             }
-            let land_suffix = match land.get(&id) {
-                Some(s) => s.clone(),
-                None => continue, // no "lands on other" text => nothing to match on.
+            let (self_land, other_land, self_fade) = match strings.get(&id) {
+                Some(t) => t.clone(),
+                None => continue, // no strings => nothing to match on.
             };
-            // Track detrimental spells (goodEffect 0). Pacify/lull spells are
-            // flagged BENEFICIAL (goodEffect 1) in EQ's data even though you cast
-            // them on enemies, so also include anything with a pacify land message
-            // — no buff shares that wording.
-            if f[28] != "0" && !is_pacify_land(&land_suffix) {
-                continue;
-            }
             let base: i64 = f[12].parse().unwrap_or(0);
             if base <= 0 {
                 continue; // no duration => no bar.
             }
             let formula: i64 = f[11].parse().unwrap_or(0);
             let icon: Option<u32> = f[75].parse().ok().filter(|&i| i > 0);
+            // goodEffect: 0 = detrimental, 1/2 = beneficial. Pacify/lull spells are
+            // flagged BENEFICIAL even though you cast them on enemies, so their
+            // land line still makes a debuff bar — no buff shares that wording.
+            let beneficial = f[28] != "0" && !is_pacify_land(&other_land);
             // First spell of a given name wins — ids ascend by era, so the lowest
             // (classic) rank, which is the one a low-level player casts, is kept.
-            by_name.entry(name.to_string()).or_insert_with(|| SpellInfo {
-                name: name.to_string(),
-                formula,
-                base,
-                icon,
-                land_suffix,
-            });
+            let info = if beneficial {
+                // A buff needs a self-land line to detect it landing on you.
+                if self_land.trim().is_empty() {
+                    continue;
+                }
+                // Record this row in the land/fade indices (every rank counts).
+                let land_key = self_land.trim().to_string();
+                land_rep
+                    .entry(land_key)
+                    .and_modify(|(mid, nm)| {
+                        if id < *mid {
+                            *mid = id;
+                            *nm = name.to_string();
+                        }
+                    })
+                    .or_insert_with(|| (id, name.to_string()));
+                let fade_key = self_fade.trim();
+                if !fade_key.is_empty() {
+                    let v = fade_cands.entry(fade_key.to_string()).or_default();
+                    if !v.iter().any(|n| n == name) {
+                        v.push(name.to_string());
+                    }
+                }
+                SpellInfo {
+                    name: name.to_string(),
+                    formula,
+                    base,
+                    icon,
+                    land_suffix: String::new(),
+                    beneficial: true,
+                    self_land,
+                    self_fade,
+                }
+            } else {
+                // A debuff needs a lands-on-other line for the bar.
+                if other_land.trim().is_empty() {
+                    continue;
+                }
+                SpellInfo {
+                    name: name.to_string(),
+                    formula,
+                    base,
+                    icon,
+                    land_suffix: other_land,
+                    beneficial: false,
+                    self_land: String::new(),
+                    self_fade: String::new(),
+                }
+            };
+            by_name.entry(name.to_string()).or_insert(info);
         }
-        Ok(Self { by_name })
+
+        // Finalize the land index to line -> representative name (drop the id).
+        let by_self_land = land_rep.into_iter().map(|(k, (_, n))| (k, n)).collect();
+        Ok(Self { by_name, by_self_land, by_self_fade: fade_cands })
     }
 }
 
@@ -202,9 +300,14 @@ mod tests {
         f.join("^")
     }
     fn str_line(id: &str, casted_other: &str) -> String {
+        str_line_full(id, "", casted_other, "")
+    }
+    fn str_line_full(id: &str, self_me: &str, casted_other: &str, wornoff_me: &str) -> String {
         let mut f = vec![String::new(); 6];
         f[0] = id.into();
+        f[3] = self_me.into();
         f[4] = casted_other.into();
+        f[5] = wornoff_me.into();
         f.join("^")
     }
 
@@ -263,5 +366,71 @@ mod tests {
             .match_land_cast("a greater mummy has been enthralled.", &HashSet::new())
             .is_none());
         assert!(sd.match_land_cast("some unrelated combat line.", &hist).is_none());
+    }
+
+    #[test]
+    fn keeps_beneficial_buffs_and_indexes_self_lines() {
+        let dir = tempfile::tempdir().unwrap();
+        let dbp = dir.path().join("spells_us.txt");
+        let strp = dir.path().join("spells_us_str.txt");
+
+        let db = format!(
+            "{}\n{}\n{}\n{}\n{}\n",
+            db_line("278", "Spirit of Wolf", "3", "360", "1", "4"), // buff w/ self-land => kept
+            db_line("500", "Clarity", "7", "100", "1", "10"), // beneficial but NO self-land => skipped
+            // Two different buffs sharing one self-land line => ambiguous, not indexed.
+            db_line("601", "Alpha Ward", "7", "50", "1", "11"),
+            db_line("602", "Beta Ward", "7", "50", "1", "12"),
+            db_line("187", "Enthrall", "8", "8", "0", "35"), // detrimental => kept, not a buff
+        );
+        let strf = format!(
+            "#SPELLINDEX^a^b^c^d^e\n{}\n{}\n{}\n{}\n{}\n",
+            str_line_full(
+                "278",
+                "You feel the spirit of wolf enter you.",
+                " is surrounded by a brief lupine aura.",
+                "The spirit of wolf leaves you.",
+            ),
+            str_line("500", " feels clear."), // only other-land, no self-land
+            str_line_full("601", "You feel warm.", " looks warm.", "You feel cold."),
+            str_line_full("602", "You feel warm.", " looks warm.", "You feel cold."),
+            str_line("187", " has been enthralled."),
+        );
+        std::fs::File::create(&dbp).unwrap().write_all(db.as_bytes()).unwrap();
+        std::fs::File::create(&strp).unwrap().write_all(strf.as_bytes()).unwrap();
+
+        let sd = SpellDb::load(&dbp, &strp).unwrap();
+
+        // The buff is kept, flagged beneficial, with an empty land_suffix so it
+        // can never resolve through the debuff path.
+        let sow = sd.get("Spirit of Wolf").expect("SoW kept");
+        assert!(sow.beneficial);
+        assert_eq!(sow.land_suffix, "");
+        assert_eq!(sow.self_land, "You feel the spirit of wolf enter you.");
+        assert_eq!(sow.self_fade, "The spirit of wolf leaves you.");
+        assert!(sd.get("Clarity").is_none(), "beneficial with no self-land is dropped");
+
+        // Self-land / self-fade resolve the buff by its lines.
+        assert_eq!(
+            sd.match_self_land("You feel the spirit of wolf enter you.").unwrap().name,
+            "Spirit of Wolf"
+        );
+        assert!(sd
+            .match_self_fade("The spirit of wolf leaves you.")
+            .contains(&"Spirit of Wolf".to_string()));
+
+        // A buff never resolves through the debuff land path, even if its name is
+        // in cast history and its OTHER-land line appears (buffing a groupmate).
+        let hist: HashSet<String> = ["Spirit of Wolf".to_string()].into_iter().collect();
+        assert!(sd
+            .match_land_cast("Groupmate is surrounded by a brief lupine aura.", &hist)
+            .is_none());
+
+        // A self-land shared by several buffs resolves to a REPRESENTATIVE — the
+        // lowest-id (classic) name — not dropped, so a foreign cast still tracks.
+        assert_eq!(sd.match_self_land("You feel warm.").unwrap().name, "Alpha Ward");
+        // A shared self-fade returns ALL candidates, so whichever bar is up clears.
+        let cold = sd.match_self_fade("You feel cold.");
+        assert!(cold.contains(&"Alpha Ward".to_string()) && cold.contains(&"Beta Ward".to_string()));
     }
 }
