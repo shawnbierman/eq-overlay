@@ -47,6 +47,11 @@ pub enum EngineEvent {
     /// The player dealt `amount` damage (melee, direct spell, or DoT tick). The
     /// overlay sums these over a rolling window for a live DPS readout.
     Damage { amount: u64 },
+    /// Wipe the bars off the screen — the in-game `clear` command, for the
+    /// timers the log can't tell us about (right-clicking a buff off writes
+    /// nothing at all). `buffs_only` limits it to your own buff bars, so a
+    /// clear doesn't cost you the rare-respawn countdowns you're camping.
+    ClearAll { buffs_only: bool },
     /// The player died. On this server (classic rules) death drops every buff,
     /// with no per-buff fade line — so the overlay wipes all `buff:` bars at
     /// once. (Debuff/respawn bars are cleared by their own lines, not this.)

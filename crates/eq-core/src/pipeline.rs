@@ -731,6 +731,15 @@ fn run(
                             Some(false) => {}
                         }
                     }
+                } else if let Some(rest) = strip_verb(&cmd, &["clear", "wipe"]) {
+                    // `clear` wipes every bar; `clear buffs` only your own. The
+                    // escape hatch for anything the log never reports — a buff
+                    // you right-clicked off logs nothing, so no line can clear it.
+                    let buffs_only = rest.eq_ignore_ascii_case("buffs")
+                        || rest.eq_ignore_ascii_case("buff");
+                    if send(&events_tx, EngineEvent::ClearAll { buffs_only }).is_none() {
+                        return Ok(());
+                    }
                 } else if let Some(rest) = strip_verb(&cmd, &["zone"]) {
                     // `zone 9:30` — set the CURRENT zone's default respawn (what
                     // a bare `remember` uses here); `zone clear` removes it.
