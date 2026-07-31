@@ -14,6 +14,16 @@
 
 pub const SECONDS_PER_TICK: u64 = 6;
 
+/// What EQEmu hands back for the "permanent" duration formulas (50/51): a buff
+/// that runs until you zone, die, or right-click it off. Far longer than any
+/// play session, so consumers treat a timer this long as having no countdown.
+pub const PERMANENT_TICKS: i64 = 72_000;
+
+/// True if `secs` came from a permanent formula — show no countdown for it.
+pub fn is_permanent(secs: u64) -> bool {
+    secs >= (PERMANENT_TICKS as u64) * SECONDS_PER_TICK
+}
+
 /// Duration in **ticks** for a spell cast at `level`, using EQ `formula` and
 /// `base` (the base/cap, in ticks). Result is capped at `base` (when `base > 0`)
 /// and never negative.
@@ -39,7 +49,12 @@ pub fn duration_ticks(level: i64, formula: i64, base: i64) -> i64 {
         11 => (level + 3) * 30,
         12 => level / 4,
         15 => base,
-        // Exotic / permanent formulas: fall back to the base cap.
+        // "Until you zone, die, or click it off" — EQEmu returns 72000 ticks for
+        // these. Lesser Shielding and ~600 other buffs use them WITH base = 0, so
+        // they must not fall through to the base (which would mean "no duration"
+        // and lose the spell entirely).
+        50 | 51 => return PERMANENT_TICKS,
+        // Exotic formulas: fall back to the base cap.
         _ => base,
     };
 
@@ -66,6 +81,18 @@ mod tests {
         // Below the cap it scales.
         assert_eq!(duration_ticks(4, 6, 5), 4); // 4/2+2 = 4
         assert_eq!(duration_ticks(2, 6, 5), 3); // 2/2+2 = 3
+    }
+
+    #[test]
+    fn permanent_formulas_ignore_a_zero_base() {
+        // Lesser Shielding: formula 50, base 0. Reading the base would say "no
+        // duration" and drop the spell, which is how "You feel armored." ended up
+        // resolving to a level-54 spell.
+        assert_eq!(duration_ticks(12, 50, 0), PERMANENT_TICKS);
+        assert_eq!(duration_ticks(60, 51, 0), PERMANENT_TICKS);
+        assert!(is_permanent(duration_seconds(12, 50, 0)));
+        // Ordinary buffs are never mistaken for permanent.
+        assert!(!is_permanent(duration_seconds(34, 3, 360))); // SoW, 36 min
     }
 
     #[test]

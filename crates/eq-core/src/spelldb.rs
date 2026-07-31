@@ -226,10 +226,15 @@ impl SpellDb {
                 None => continue, // no strings => nothing to match on.
             };
             let base: i64 = f[12].parse().unwrap_or(0);
-            if base <= 0 {
-                continue; // no duration => no bar.
-            }
             let formula: i64 = f[11].parse().unwrap_or(0);
+            // No duration at all => no bar. `base` is the usual source, but the
+            // permanent formulas carry their duration in the FORMULA and leave
+            // base at 0 (Lesser Shielding). Dropping those lost the spell from
+            // the candidate pool, so "You feel armored." resolved to the only
+            // survivor — a level-54 spell a level-12 character can't have.
+            if base <= 0 && !matches!(formula, 50 | 51) {
+                continue;
+            }
             let icon: Option<u32> = f[75].parse().ok().filter(|&i| i > 0);
             // goodEffect: 0 = detrimental, 1/2 = beneficial. Pacify/lull spells are
             // flagged BENEFICIAL even though you cast them on enemies, so their

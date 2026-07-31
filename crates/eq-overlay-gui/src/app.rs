@@ -130,6 +130,11 @@ struct ActiveTimer {
     /// apply it to. Stock EQEmu logs the awaken BEFORE the worn-off (this
     /// server logs it after); either order must break through the swallow.
     broken_at: Option<Instant>,
+    /// Mutual-exclusion group (see `TimerEvent::group`): a new timer in the same
+    /// group replaces this one, and a group clear removes it. Illusions all share
+    /// one, so wearing a new one drops the old bar even though the log's fade line
+    /// ("Your illusion fades.") names no spell.
+    group: Option<String>,
 }
 
 impl ActiveTimer {
@@ -390,6 +395,13 @@ impl OverlayApp {
                 EngineEvent::Timer(t) => {
                     changed = true;
                     let is_respawn = t.key.starts_with("respawn:");
+                    // Only one timer per mutual-exclusion group: a new illusion
+                    // replaces the one you were wearing. EQ logs no fade naming
+                    // the old spell, so without this both bars sit there.
+                    if let Some(g) = &t.group {
+                        self.timers
+                            .retain(|x| x.key == t.key || x.group.as_deref() != Some(g.as_str()));
+                    }
                     if !is_respawn && !t.trigger.is_empty() {
                         let e = self.spell_stats.entry(t.trigger.clone()).or_insert((0, 0));
                         e.0 += 1;
@@ -423,6 +435,7 @@ impl OverlayApp {
                         x.started_at = t.started_at;
                         x.alerted = false;
                         x.up_at = None;
+                        x.group = t.group;
                     } else {
                         self.timers.push(ActiveTimer {
                             key: t.key,
@@ -437,6 +450,7 @@ impl OverlayApp {
                             swallow_until: None,
                             swallowed_at: None,
                             broken_at: None,
+                            group: t.group,
                         });
                     }
                 }
@@ -462,6 +476,13 @@ impl OverlayApp {
                         }
                     }
                     self.timers.retain(|x| x.count > 0);
+                }
+                EngineEvent::ClearGroup { group } => {
+                    // A shared fade line ("Your illusion fades.") names no spell,
+                    // so clear whatever in that group is up.
+                    let before = self.timers.len();
+                    self.timers.retain(|x| x.group.as_deref() != Some(group.as_str()));
+                    changed |= self.timers.len() != before;
                 }
                 EngineEvent::MezBroken { target } => {
                     // Explicit damage-break line. Its worn-off companion is
@@ -2023,7 +2044,16 @@ impl eframe::App for OverlayApp {
 
                     // Countdown on the right; measure it so text can't overrun it.
                     // Spawn timers read "UP" (green) once they hit zero.
-                    let rem = if up { "UP".to_string() } else { fmt_remaining(t.remaining()) };
+                    // Permanent buffs (until you zone/die/click off) have no
+                    // meaningful countdown — a dash beats a fictional 119:58:14.
+                    let permanent = eq_core::is_permanent(t.duration.as_secs());
+                    let rem = if up {
+                        "UP".to_string()
+                    } else if permanent {
+                        "—".to_string()
+                    } else {
+                        fmt_remaining(t.remaining())
+                    };
                     let rem_font = FontId::monospace(13.0);
                     let rem_w = ctx.fonts(|f| f.layout_no_wrap(rem.clone(), rem_font.clone(), Color32::WHITE).size().x);
                     painter.text(

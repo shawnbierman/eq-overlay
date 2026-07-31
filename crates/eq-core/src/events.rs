@@ -15,6 +15,10 @@ pub enum EngineEvent {
     /// A trigger asked to remove active timers whose key matches — e.g. a mez
     /// wore off / broke, so its countdown should disappear immediately.
     ClearTimer { key: String },
+    /// Remove every timer in a mutual-exclusion group (see [`TimerEvent::group`]).
+    /// Sent when a shared fade line arrives — "Your illusion fades." names no
+    /// spell, and 453 illusions share it, so the group is what can be cleared.
+    ClearGroup { group: String },
     /// Remove ALL active timers on a target (every `spell:<target>` key) — e.g.
     /// the mob died, so no per-spell wear-off line will ever arrive.
     ClearTarget { target: String },
@@ -79,6 +83,12 @@ pub struct TimerEvent {
     pub started_at: Instant,
     /// Wall-clock start, for human-readable logging.
     pub started_wall: DateTime<Local>,
+    /// Mutual-exclusion group: only ONE timer with a given group can be live, so
+    /// a new one replaces any other in it. Buffs use their shared fade text —
+    /// every illusion says "You feel different." on landing and "Your illusion
+    /// fades." on dropping, and only one illusion can be up at a time. None for
+    /// timers that stack freely (debuffs on different mobs, respawn clocks).
+    pub group: Option<String>,
 }
 
 impl TimerEvent {

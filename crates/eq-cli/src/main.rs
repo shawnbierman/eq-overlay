@@ -126,6 +126,9 @@ fn tail(
             Ok(EngineEvent::ClearTimer { key }) => {
                 println!("          [CLEAR  ] {key}");
             }
+            Ok(EngineEvent::ClearGroup { group }) => {
+                println!("          [CLEAR^ ] group {group}");
+            }
             Ok(EngineEvent::ClearTarget { target }) => {
                 println!("          [CLEAR* ] all timers on {target}");
             }

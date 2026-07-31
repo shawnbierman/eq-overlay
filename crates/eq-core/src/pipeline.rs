@@ -467,6 +467,7 @@ fn run(
                                 duration: Duration::from_secs(secs),
                                 started_at: Instant::now(),
                                 started_wall: Local::now(),
+                                group: None, // debuffs on different mobs stack
                             }),
                         )
                         .is_none()
@@ -506,6 +507,11 @@ fn run(
                                 duration: Duration::from_secs(secs),
                                 started_at: Instant::now(),
                                 started_wall: Local::now(),
+                                // Buffs sharing a fade line replace each other:
+                                // all 453 illusions say "Your illusion fades.",
+                                // and you can only wear one illusion at a time.
+                                group: Some(info.self_fade.trim().to_string())
+                                    .filter(|g| !g.is_empty()),
                             }),
                         )
                         .is_none()
@@ -553,14 +559,20 @@ fn run(
             // family, so clear every candidate name (only the active bar matches;
             // the rest are no-ops). The generic no-target "Your <Spell> spell has
             // worn off." names its spell exactly.
-            let mut fade_names: Vec<String> = spell_db
+            let known_fade = spell_db
                 .as_ref()
-                .map(|db| db.match_self_fade(&parsed.message).to_vec())
-                .unwrap_or_default();
-            if let Some(c) = self_wornoff_re.captures(&parsed.message) {
-                fade_names.push(c[1].trim().to_string());
+                .is_some_and(|db| !db.match_self_fade(&parsed.message).is_empty());
+            if known_fade {
+                // Clear by GROUP, not by name: the line names no spell ("Your
+                // illusion fades."), and the group is exactly the set it could
+                // have been.
+                let group = parsed.message.trim().to_string();
+                if send(&events_tx, EngineEvent::ClearGroup { group }).is_none() {
+                    return Ok(());
+                }
             }
-            for name in fade_names {
+            if let Some(c) = self_wornoff_re.captures(&parsed.message) {
+                let name = c[1].trim();
                 if send(&events_tx, EngineEvent::ClearTimer { key: format!("buff:{name}") })
                     .is_none()
                 {
@@ -656,6 +668,7 @@ fn run(
                             duration: Duration::from_secs(secs),
                             started_at: Instant::now(),
                             started_wall: Local::now(),
+                            group: None,
                         }),
                     )
                     .is_none()
@@ -853,6 +866,7 @@ fn run(
                             duration: Duration::from_secs(secs),
                             started_at: Instant::now(),
                             started_wall: Local::now(),
+                            group: None,
                         }),
                     )
                     .is_none()
@@ -1058,6 +1072,7 @@ fn do_add(
             duration: Duration::from_secs(secs),
             started_at,
             started_wall: Local::now(),
+            group: None,
         }),
     )
 }

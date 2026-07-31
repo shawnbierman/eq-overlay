@@ -36,7 +36,7 @@ pub mod tailer;
 pub mod triggers;
 
 pub use config::{char_server_from_log, Config};
-pub use duration::{duration_seconds, duration_ticks};
+pub use duration::{duration_seconds, duration_ticks, is_permanent};
 pub use events::{EngineEvent, TimerEvent, TriggerEvent};
 pub use parser::{parse_line, LogLine};
 pub use pipeline::{
