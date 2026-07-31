@@ -46,18 +46,35 @@ pub struct SpellInfo {
     /// Buffs only: the whole line shown when this buff fades from YOU, e.g.
     /// "Your strength fades." (field [5]). Empty for debuffs.
     pub self_fade: String,
+    /// Spell id (field [0]), for deterministic tie-breaking.
+    pub id: i64,
+    /// Lowest level any class can cast this at (fields [36..=51], one per class;
+    /// 255/0 = that class can't). None when no class can cast it at all. Used to
+    /// disambiguate buffs that share a self-land line: a level-18 character did
+    /// not just get hit by a level-44 bard song.
+    pub min_level: Option<u32>,
+}
+
+/// Class-level columns in `spells_us.txt`: 16 consecutive fields, one per class,
+/// holding the level that class gets the spell (255 — or 0 — means never).
+const CLASS_LEVEL_FIELDS: std::ops::RangeInclusive<usize> = 36..=51;
+
+/// Lowest level at which ANY class can cast this row, or None if none can.
+fn min_class_level(f: &[&str]) -> Option<u32> {
+    CLASS_LEVEL_FIELDS
+        .filter_map(|i| f.get(i)?.trim().parse::<u32>().ok())
+        .filter(|&lv| lv > 0 && lv < 255)
+        .min()
 }
 
 #[derive(Debug, Default)]
 pub struct SpellDb {
     by_name: HashMap<String, SpellInfo>,
-    /// self-land line -> a representative buff name: the lowest spell id sharing
-    /// the line, which is the classic base (e.g. "Clarity" for the whole mana-regen
-    /// family). Lets a buff cast on you by someone else (no cast of ours to arm)
-    /// start a bar from its land line alone. The exact rank isn't known this way,
-    /// but a self-cast resolves it precisely via the armed cast, and the fade line
-    /// clears it regardless.
-    by_self_land: HashMap<String, String>,
+    /// self-land line -> every buff that shares it. EQ reuses one message across
+    /// unrelated spells ("Your mind sharpens." is a level-44 bard song AND two
+    /// enchanter buffs), so the winner is chosen at match time from your cast
+    /// history and level — see [`SpellDb::match_self_land`].
+    by_self_land: HashMap<String, Vec<String>>,
     /// self-fade line -> every buff name that uses it. A fade clears whichever of
     /// those bars is up (the rest are no-ops), so fade lines shared across a rank
     /// family still clear correctly.
@@ -112,12 +129,39 @@ impl SpellDb {
     }
 
     /// Resolve a buff from its self-land line ("You feel strong.") alone — for a
-    /// buff someone else cast on YOU, where there's no cast of ours to arm. Only
-    /// lines unique to one buff resolve (see `by_self_land`); a full-line exact
-    /// match, so ordinary combat text can't trip it.
-    pub fn match_self_land(&self, msg: &str) -> Option<&SpellInfo> {
-        let name = self.by_self_land.get(msg.trim())?;
-        self.by_name.get(name)
+    /// buff someone else cast on YOU, or one whose cast we never saw (an AA or a
+    /// clicky logs no "You begin casting"). A full-line exact match, so ordinary
+    /// combat text can't trip it.
+    ///
+    /// EQ reuses land messages across unrelated spells, so pick the best of the
+    /// candidates, in this order:
+    ///   1. one you've actually cast this session — that's certainly the one;
+    ///   2. one your level can have, taking the HIGHEST such requirement (you
+    ///      cast the best rank you own, and it rules out e.g. a level-44 bard
+    ///      song landing on a level-18 character);
+    ///   3. failing both (a buff from a higher-level caster), the lowest id —
+    ///      the classic base spell of the family.
+    pub fn match_self_land(
+        &self,
+        msg: &str,
+        player_level: u32,
+        cast_history: &HashSet<String>,
+    ) -> Option<&SpellInfo> {
+        let names = self.by_self_land.get(msg.trim())?;
+        names
+            .iter()
+            .filter_map(|n| self.by_name.get(n))
+            .max_by_key(|info| {
+                let cast_by_you = cast_history.contains(&info.name);
+                let castable = info.min_level.is_some_and(|lv| lv <= player_level);
+                (
+                    cast_by_you,
+                    castable,
+                    if castable { info.min_level.unwrap_or(0) } else { 0 },
+                    // Lowest id wins the remaining ties (Reverse via negation).
+                    -info.id,
+                )
+            })
     }
 
     /// Every buff name whose self-fade line ("Your strength fades.") is this line
@@ -160,9 +204,9 @@ impl SpellDb {
             .with_context(|| format!("reading {}", db_path.display()))?;
         let mut by_name: HashMap<String, SpellInfo> = HashMap::new();
         // Buff line indices, accumulated across every beneficial row (all ranks,
-        // not just the one kept in `by_name`): self-land -> (lowest id, its name)
-        // for a representative label, and self-fade -> all names that use it.
-        let mut land_rep: HashMap<String, (i64, String)> = HashMap::new();
+        // not just the one kept in `by_name`): self-land -> all names sharing it
+        // (the winner is picked at match time), self-fade -> all names using it.
+        let mut land_cands: HashMap<String, Vec<String>> = HashMap::new();
         let mut fade_cands: HashMap<String, Vec<String>> = HashMap::new();
         for line in db_text.lines() {
             let f: Vec<&str> = line.split('^').collect();
@@ -199,16 +243,10 @@ impl SpellDb {
                     continue;
                 }
                 // Record this row in the land/fade indices (every rank counts).
-                let land_key = self_land.trim().to_string();
-                land_rep
-                    .entry(land_key)
-                    .and_modify(|(mid, nm)| {
-                        if id < *mid {
-                            *mid = id;
-                            *nm = name.to_string();
-                        }
-                    })
-                    .or_insert_with(|| (id, name.to_string()));
+                let v = land_cands.entry(self_land.trim().to_string()).or_default();
+                if !v.iter().any(|n| n == name) {
+                    v.push(name.to_string());
+                }
                 let fade_key = self_fade.trim();
                 if !fade_key.is_empty() {
                     let v = fade_cands.entry(fade_key.to_string()).or_default();
@@ -225,6 +263,8 @@ impl SpellDb {
                     beneficial: true,
                     self_land,
                     self_fade,
+                    id,
+                    min_level: min_class_level(&f),
                 }
             } else {
                 // A debuff needs a lands-on-other line for the bar.
@@ -240,14 +280,14 @@ impl SpellDb {
                     beneficial: false,
                     self_land: String::new(),
                     self_fade: String::new(),
+                    id,
+                    min_level: min_class_level(&f),
                 }
             };
             by_name.entry(name.to_string()).or_insert(info);
         }
 
-        // Finalize the land index to line -> representative name (drop the id).
-        let by_self_land = land_rep.into_iter().map(|(k, (_, n))| (k, n)).collect();
-        Ok(Self { by_name, by_self_land, by_self_fade: fade_cands })
+        Ok(Self { by_name, by_self_land: land_cands, by_self_fade: fade_cands })
     }
 }
 
@@ -290,6 +330,19 @@ mod tests {
     use std::io::Write;
 
     fn db_line(id: &str, name: &str, formula: &str, base: &str, good: &str, icon: &str) -> String {
+        db_line_lv(id, name, formula, base, good, icon, &[])
+    }
+    /// `classes` = (class field index within 36..=51, level) pairs; every other
+    /// class column is 255 ("never gets it"), as in the real file.
+    fn db_line_lv(
+        id: &str,
+        name: &str,
+        formula: &str,
+        base: &str,
+        good: &str,
+        icon: &str,
+        classes: &[(usize, u32)],
+    ) -> String {
         let mut f = vec![String::new(); 173];
         f[0] = id.into();
         f[1] = name.into();
@@ -297,8 +350,16 @@ mod tests {
         f[12] = base.into();
         f[28] = good.into();
         f[75] = icon.into();
+        for i in CLASS_LEVEL_FIELDS {
+            f[i] = "255".into();
+        }
+        for &(i, lv) in classes {
+            f[i] = lv.to_string();
+        }
         f.join("^")
     }
+    const BRD: usize = 43;
+    const ENC: usize = 49;
     fn str_line(id: &str, casted_other: &str) -> String {
         str_line_full(id, "", casted_other, "")
     }
@@ -374,17 +435,19 @@ mod tests {
         let dbp = dir.path().join("spells_us.txt");
         let strp = dir.path().join("spells_us_str.txt");
 
+        // Mirrors the real file: "Your mind sharpens." is shared by a level-44
+        // BARD song (lowest id!) and two enchanter buffs at levels 11 and 17.
         let db = format!(
-            "{}\n{}\n{}\n{}\n{}\n",
+            "{}\n{}\n{}\n{}\n{}\n{}\n",
             db_line("278", "Spirit of Wolf", "3", "360", "1", "4"), // buff w/ self-land => kept
             db_line("500", "Clarity", "7", "100", "1", "10"), // beneficial but NO self-land => skipped
-            // Two different buffs sharing one self-land line => ambiguous, not indexed.
-            db_line("601", "Alpha Ward", "7", "50", "1", "11"),
-            db_line("602", "Beta Ward", "7", "50", "1", "12"),
+            db_line_lv("745", "Cassindra's Elegy", "7", "2", "1", "11", &[(BRD, 44)]),
+            db_line_lv("2561", "Intellectual Advancement", "11", "270", "1", "141", &[(ENC, 11)]),
+            db_line_lv("2562", "Intellectual Superiority", "11", "270", "1", "141", &[(ENC, 17)]),
             db_line("187", "Enthrall", "8", "8", "0", "35"), // detrimental => kept, not a buff
         );
         let strf = format!(
-            "#SPELLINDEX^a^b^c^d^e\n{}\n{}\n{}\n{}\n{}\n",
+            "#SPELLINDEX^a^b^c^d^e\n{}\n{}\n{}\n{}\n{}\n{}\n",
             str_line_full(
                 "278",
                 "You feel the spirit of wolf enter you.",
@@ -392,8 +455,9 @@ mod tests {
                 "The spirit of wolf leaves you.",
             ),
             str_line("500", " feels clear."), // only other-land, no self-land
-            str_line_full("601", "You feel warm.", " looks warm.", "You feel cold."),
-            str_line_full("602", "You feel warm.", " looks warm.", "You feel cold."),
+            str_line_full("745", "Your mind sharpens.", " looks smart.", "Your mind dulls."),
+            str_line_full("2561", "Your mind sharpens.", " looks smart.", "Your mind dulls."),
+            str_line_full("2562", "Your mind sharpens.", " looks smart.", "Your mind dulls."),
             str_line("187", " has been enthralled."),
         );
         std::fs::File::create(&dbp).unwrap().write_all(db.as_bytes()).unwrap();
@@ -411,8 +475,9 @@ mod tests {
         assert!(sd.get("Clarity").is_none(), "beneficial with no self-land is dropped");
 
         // Self-land / self-fade resolve the buff by its lines.
+        let none = HashSet::new();
         assert_eq!(
-            sd.match_self_land("You feel the spirit of wolf enter you.").unwrap().name,
+            sd.match_self_land("You feel the spirit of wolf enter you.", 18, &none).unwrap().name,
             "Spirit of Wolf"
         );
         assert!(sd
@@ -426,11 +491,28 @@ mod tests {
             .match_land_cast("Groupmate is surrounded by a brief lupine aura.", &hist)
             .is_none());
 
-        // A self-land shared by several buffs resolves to a REPRESENTATIVE — the
-        // lowest-id (classic) name — not dropped, so a foreign cast still tracks.
-        assert_eq!(sd.match_self_land("You feel warm.").unwrap().name, "Alpha Ward");
+        // The shared-line case. At level 18 the level-44 bard song is impossible,
+        // and of the two enchanter buffs you qualify for, the HIGHER one is the
+        // rank you'd actually be casting.
+        assert_eq!(
+            sd.match_self_land("Your mind sharpens.", 18, &none).unwrap().name,
+            "Intellectual Superiority"
+        );
+        // Below 17 you can only have the lower rank.
+        assert_eq!(
+            sd.match_self_land("Your mind sharpens.", 12, &none).unwrap().name,
+            "Intellectual Advancement"
+        );
+        // Having actually cast one settles it outright — even a level-44 song
+        // (a 44 bard really can be the one who cast it).
+        let bard: HashSet<String> = ["Cassindra's Elegy".to_string()].into_iter().collect();
+        assert_eq!(
+            sd.match_self_land("Your mind sharpens.", 50, &bard).unwrap().name,
+            "Cassindra's Elegy"
+        );
         // A shared self-fade returns ALL candidates, so whichever bar is up clears.
-        let cold = sd.match_self_fade("You feel cold.");
-        assert!(cold.contains(&"Alpha Ward".to_string()) && cold.contains(&"Beta Ward".to_string()));
+        let dull = sd.match_self_fade("Your mind dulls.");
+        assert!(dull.contains(&"Intellectual Superiority".to_string()));
+        assert!(dull.contains(&"Cassindra's Elegy".to_string()));
     }
 }

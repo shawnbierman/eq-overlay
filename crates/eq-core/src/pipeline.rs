@@ -490,7 +490,9 @@ fn run(
                             && parsed.message.trim() == info.self_land.trim()
                     })
                     .map(|idx| pending.remove(idx).0)
-                    .or_else(|| db.match_self_land(&parsed.message).cloned());
+                    .or_else(|| {
+                        db.match_self_land(&parsed.message, player_level, &cast_history).cloned()
+                    });
                 if let Some(info) = buff {
                     let secs = duration_seconds(player_level as i64, info.formula, info.base);
                     if secs > 0
