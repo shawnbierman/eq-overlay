@@ -126,12 +126,6 @@ fn tail(
             Ok(EngineEvent::ClearTimer { key }) => {
                 println!("          [CLEAR  ] {key}");
             }
-            Ok(EngineEvent::ClearAll { buffs_only }) => {
-                println!(
-                    "          [CLEAR! ] {}",
-                    if buffs_only { "all buff bars" } else { "all bars" }
-                );
-            }
             Ok(EngineEvent::ClearGroup { group }) => {
                 println!("          [CLEAR^ ] group {group}");
             }

@@ -477,15 +477,6 @@ impl OverlayApp {
                     }
                     self.timers.retain(|x| x.count > 0);
                 }
-                EngineEvent::ClearAll { buffs_only } => {
-                    let before = self.timers.len();
-                    if buffs_only {
-                        self.timers.retain(|x| !x.key.starts_with("buff:"));
-                    } else {
-                        self.timers.clear();
-                    }
-                    changed |= self.timers.len() != before;
-                }
                 EngineEvent::ClearGroup { group } => {
                     // A shared fade line ("Your illusion fades.") names no spell,
                     // so clear whatever in that group is up.
@@ -1004,33 +995,20 @@ impl OverlayApp {
             ui.end_row();
         });
 
-        // ── Clear the screen ──────────────────────────────────────────────
-        // Some bars can't be cleared by the log: right-clicking a buff off
-        // writes NOTHING, so nothing can ever tell us it's gone. These are the
-        // manual escape hatch (also available in game as `clear` / `clear buffs`,
-        // which is the one that works without leaving fullscreen).
-        ui.add_space(8.0);
-        ui.separator();
+        // Wipe the overlay. The escape hatch for bars nothing can clear: a buff
+        // you right-click off writes NO log line at all, so it would otherwise
+        // sit there until its duration ran out.
+        ui.add_space(10.0);
         let live = self.timers.len();
-        let buffs = self.timers.iter().filter(|t| t.key.starts_with("buff:")).count();
-        ui.horizontal(|ui| {
-            if ui
-                .add_enabled(live > 0, egui::Button::new("Clear all timers"))
-                .on_hover_text("Remove every bar on screen, including rare respawn countdowns.")
-                .clicked()
-            {
-                self.timers.clear();
-            }
-            if ui
-                .add_enabled(buffs > 0, egui::Button::new("Clear buffs only"))
-                .on_hover_text("Remove just your own buff bars — keeps rare respawn timers running.")
-                .clicked()
-            {
-                self.timers.retain(|t| !t.key.starts_with("buff:"));
-            }
-        });
+        if ui
+            .add_enabled(live > 0, egui::Button::new("Clear overlay"))
+            .on_hover_text("Remove every bar — debuffs, buffs, and rare respawn timers.")
+            .clicked()
+        {
+            self.timers.clear();
+        }
         ui.label(
-            RichText::new("In game:  /1 clear   (or  /1 clear buffs )  — bind it to a hotkey.")
+            RichText::new("Removes every bar: debuffs, buffs, and respawn timers.")
                 .size(10.5)
                 .color(dim),
         );
