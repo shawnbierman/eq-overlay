@@ -38,6 +38,12 @@ const MIN_RESPAWN_SECS: u64 = 45;
 /// How long a "You begin casting X." stays armed waiting for its land line.
 const PENDING_TTL: Duration = Duration::from_secs(20);
 
+/// Ceiling on a buff duration learned by watching land->fade. Mote ranks can run
+/// several times the client file's base (Alacrity IV measures far past base
+/// Alacrity), so the cap is generous — it exists only to reject a measurement
+/// taken across a missed land, not to second-guess a real one.
+const MAX_LEARNED_BUFF_SECS: u64 = 2 * 60 * 60;
+
 /// Commands the UI can send INTO the running pipeline (same effects as the
 /// in-game chat commands — live rares map + shareable DB file + events out).
 #[derive(Debug, Clone)]
@@ -495,12 +501,24 @@ fn run(
                         db.match_self_land(&parsed.message, player_level, &cast_history).cloned()
                     });
                 if let Some(info) = buff {
-                    let secs = duration_seconds(player_level as i64, info.formula, info.base);
+                    // The client file only has the BASE rank. Mote ranks
+                    // ("Alacrity IV") are server-side and run far longer than the
+                    // base formula says, so grow the bar to the longest clean
+                    // land->fade we've actually measured, exactly as debuff bars
+                    // do. Until the first full cycle is observed it's the base.
+                    let base_secs = duration_seconds(player_level as i64, info.formula, info.base);
+                    let secs = base_secs.max(learned.get(&info.name).copied().unwrap_or(0));
+                    let key = format!("buff:{}", info.name);
+                    // Permanent buffs never wear off on their own — timing one
+                    // would just measure how long the session ran.
+                    if !crate::duration::is_permanent(secs) {
+                        land_times.insert(key.clone(), Instant::now());
+                    }
                     if secs > 0
                         && send(
                             &events_tx,
                             EngineEvent::Timer(TimerEvent {
-                                key: format!("buff:{}", info.name),
+                                key: key.clone(),
                                 trigger: String::new(), // the bar shows the buff name itself
                                 icon: info.icon,
                                 label: format!("{} [Buff]", info.name),
@@ -559,9 +577,27 @@ fn run(
             // family, so clear every candidate name (only the active bar matches;
             // the rest are no-ops). The generic no-target "Your <Spell> spell has
             // worn off." names its spell exactly.
-            let known_fade = spell_db
+            // Learn the buff's REAL duration from land->fade. The fade line names
+            // no spell, but we know which of its candidates we actually started a
+            // bar for (`land_times`), so the measurement lands on the right spell.
+            // This is what makes a mote rank's longer bar stick.
+            let fade_names: Vec<String> = spell_db
                 .as_ref()
-                .is_some_and(|db| !db.match_self_fade(&parsed.message).is_empty());
+                .map(|db| db.match_self_fade(&parsed.message).to_vec())
+                .unwrap_or_default();
+            for name in &fade_names {
+                if let Some(t0) = land_times.remove(&format!("buff:{name}")) {
+                    let actual = t0.elapsed().as_secs();
+                    // Only an unbroken cycle we timed ourselves counts, and only
+                    // within a sane ceiling, so a missed land can't teach the bar
+                    // a duration measured across half a play session.
+                    if actual > 0 && actual <= MAX_LEARNED_BUFF_SECS {
+                        let e = learned.entry(name.clone()).or_insert(0);
+                        *e = (*e).max(actual);
+                    }
+                }
+            }
+            let known_fade = !fade_names.is_empty();
             if known_fade {
                 // Clear by GROUP, not by name: the line names no spell ("Your
                 // illusion fades."), and the group is exactly the set it could
@@ -573,9 +609,16 @@ fn run(
             }
             if let Some(c) = self_wornoff_re.captures(&parsed.message) {
                 let name = c[1].trim();
-                if send(&events_tx, EngineEvent::ClearTimer { key: format!("buff:{name}") })
-                    .is_none()
-                {
+                let key = format!("buff:{name}");
+                // This form names its spell outright, so the measurement is exact.
+                if let Some(t0) = land_times.remove(&key) {
+                    let actual = t0.elapsed().as_secs();
+                    if actual > 0 && actual <= MAX_LEARNED_BUFF_SECS {
+                        let e = learned.entry(name.to_string()).or_insert(0);
+                        *e = (*e).max(actual);
+                    }
+                }
+                if send(&events_tx, EngineEvent::ClearTimer { key }).is_none() {
                     return Ok(());
                 }
             }
