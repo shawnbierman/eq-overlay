@@ -1825,7 +1825,7 @@ impl eframe::App for OverlayApp {
             }
         }
 
-        egui::CentralPanel::default()
+        let content = egui::CentralPanel::default()
             .frame(Frame::none())
             .show(ctx, |ui| {
                 let painter = ui.painter();
@@ -2148,7 +2148,34 @@ impl eframe::App for OverlayApp {
                     y += slot_h + gap;
                 }
 
-            });
+                // How tall the bars actually came out, and how tall the window is
+                // right now — the caller grows the window when they disagree.
+                (y - area.min.y + pad - gap, area.height())
+            })
+            .inner;
+
+        // Grow the window to fit the bars. The window is a fixed OS rectangle, so
+        // anything past its bottom edge is CLIPPED by Windows — with a full buff
+        // set (a dozen bars plus three section chips) the last timer was getting
+        // cut in half. The configured height acts as the floor, so this only ever
+        // adds space, and it's capped to the screen below the overlay's top edge.
+        {
+            let (needed, current) = content;
+            let floor = self.info.overlay.3 as f32;
+            let ceiling = self
+                .monitor_size
+                .filter(|m| m.y > 0.0)
+                .map(|m| (m.y - self.info.overlay.1 as f32 - 8.0).max(200.0))
+                .unwrap_or(2000.0);
+            let target = needed.max(floor).min(ceiling);
+            // Threshold keeps a sub-pixel disagreement from resizing every frame.
+            if (target - current).abs() > 6.0 {
+                ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(Vec2::new(
+                    self.info.overlay.2 as f32,
+                    target,
+                )));
+            }
+        }
 
         // Animate at 20 fps only while something on screen is moving; idle
         // drops to a slow keepalive tick (topmost re-assert) instead of
