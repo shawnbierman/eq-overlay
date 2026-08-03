@@ -14,6 +14,7 @@ notify.workspace = true
 aho-corasick.workspace = true
 regex.workspace = true
 rodio.workspace = true
+rusqlite.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

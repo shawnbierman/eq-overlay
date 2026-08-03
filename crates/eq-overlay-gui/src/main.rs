@@ -81,6 +81,7 @@ fn main() -> Result<()> {
                 audio_enabled: true,
                 spawn_sound: "default",
                 auto_update: true,
+                track_buffs: true,
             };
             if write_config_file(&target, &defaults).is_ok() {
                 config_path = Some(target);
@@ -134,6 +135,8 @@ fn main() -> Result<()> {
         spawn_sound: "default".to_string(),
         zone_respawn: Default::default(),
         auto_update: true,
+        track_buffs: true,
+        store_path: None,
     };
 
     if let Some(cfg) = cfg {
@@ -150,6 +153,9 @@ fn main() -> Result<()> {
         }
         info.zone_respawn = cfg.zone_respawn.clone();
         info.auto_update = cfg.updates.auto_check.unwrap_or(true);
+        info.track_buffs = cfg.general.track_buffs.unwrap_or(true);
+        // Read before `cfg` is handed to the pipeline below.
+        info.store_path = cfg.store_path.clone();
         info.game_dir = icon_dir
             .as_ref()
             .and_then(|d| d.parent())
@@ -295,6 +301,7 @@ pub(crate) struct SavedSettings<'a> {
     pub audio_enabled: bool,
     pub spawn_sound: &'a str,
     pub auto_update: bool,
+    pub track_buffs: bool,
 }
 
 pub(crate) fn write_config_file(path: &Path, s: &SavedSettings) -> std::io::Result<()> {
@@ -309,6 +316,7 @@ pub(crate) fn write_config_file(path: &Path, s: &SavedSettings) -> std::io::Resu
          icon_dir = '{g}\\uifiles\\default'\n\
          icon_sheet = \"Spells\"\n\
          player_level = {level}\n\
+         track_buffs = {buffs}\n\
          {channel_line}\
          [audio]\n\
          enabled = {audio}\n\
@@ -333,6 +341,7 @@ pub(crate) fn write_config_file(path: &Path, s: &SavedSettings) -> std::io::Resu
         audio = s.audio_enabled,
         sound = s.spawn_sound,
         auto = s.auto_update,
+        buffs = s.track_buffs,
     );
     std::fs::write(path, content)
 }

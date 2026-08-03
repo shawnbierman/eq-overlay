@@ -32,6 +32,7 @@ pub mod events;
 pub mod parser;
 pub mod pipeline;
 pub mod spelldb;
+pub mod store;
 pub mod tailer;
 pub mod triggers;
 

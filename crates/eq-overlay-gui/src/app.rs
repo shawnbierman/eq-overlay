@@ -61,6 +61,11 @@ pub struct StartupInfo {
     pub zone_respawn: HashMap<String, u64>,
     /// Periodically check GitHub for newer releases (config `[updates]`).
     pub auto_update: bool,
+    /// Show a bar for each buff on you (config `[general] track_buffs`).
+    pub track_buffs: bool,
+    /// Path of the learning database, so the Spells tab can list and forget
+    /// measured durations.
+    pub store_path: Option<PathBuf>,
 }
 
 /// If a timer's clear (wear-off) line is missed, drop it this long past its
@@ -259,6 +264,12 @@ pub struct OverlayApp {
     run_at_login: bool,
     /// Transient one-line result of the last shortcut action (Setup tab).
     shortcut_note: String,
+    /// Show a bar for each buff on YOU. Off hides the BUFFS section entirely and
+    /// stops the pipeline making them; debuffs and respawn timers are unaffected.
+    track_buffs: bool,
+    /// The learning database (durations measured in past sessions), for the
+    /// Spells tab's list and its forget buttons. None when it couldn't be opened.
+    store: Option<eq_core::store::Store>,
 }
 
 enum UpdateState {
@@ -344,6 +355,9 @@ impl OverlayApp {
     ) -> Self {
         let (upd_tx, upd_rx) = std::sync::mpsc::channel();
         let info2_auto = info.auto_update;
+        // Read before `info` is moved into the struct below.
+        let info2_buffs = info.track_buffs;
+        let info2_store = info.store_path.as_deref().and_then(eq_core::store::Store::open);
         Self {
             rx,
             timers: Vec::new(),
@@ -380,6 +394,8 @@ impl OverlayApp {
             launched_at: Instant::now(),
             run_at_login: crate::shortcuts::run_at_login_enabled(),
             shortcut_note: String::new(),
+            track_buffs: info2_buffs,
+            store: info2_store,
         }
     }
 
@@ -1239,8 +1255,95 @@ impl OverlayApp {
         );
     }
 
-    fn tab_spells(&self, ui: &mut egui::Ui) {
+    fn tab_spells(&mut self, ui: &mut egui::Ui) {
         let dim = DIM;
+
+        // ── Buff bars on/off ──────────────────────────────────────────────
+        // Applies live, and turning it off drops the bars already on screen so
+        // the BUFFS section disappears immediately instead of at the next fade.
+        if ui
+            .checkbox(&mut self.track_buffs, "Show a bar for each buff on me")
+            .on_hover_text(
+                "Off hides the BUFFS section. Debuffs you land on mobs and rare \
+                 respawn timers are unaffected.",
+            )
+            .changed()
+        {
+            if let Some(tx) = &self.control_tx {
+                let _ = tx.send(eq_core::Control::SetTrackBuffs { enabled: self.track_buffs });
+            }
+            if !self.track_buffs {
+                self.timers.retain(|t| !t.key.starts_with("buff:"));
+            }
+            self.persist_config();
+        }
+        ui.add_space(6.0);
+        ui.separator();
+
+        // ── What the overlay has measured ─────────────────────────────────
+        // The client's spell file only has base ranks, so a mote rank's real
+        // duration can only come from watching one run out. These are kept
+        // between sessions; since the file can't be hand-edited, this is where a
+        // wrong one gets fixed.
+        let rows = self.store.as_ref().map(|s| s.learned_rows()).unwrap_or_default();
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Measured durations").color(INK).strong().size(12.0));
+            ui.add_space(6.0);
+            ui.colored_label(dim, format!("{} spell(s)", rows.len()));
+        });
+        if rows.is_empty() {
+            ui.colored_label(
+                dim,
+                "None yet. Let a mote-ranked spell run out once without recasting \
+                 and its real duration is remembered from then on.",
+            );
+        } else {
+            let mut forget: Option<String> = None;
+            egui::ScrollArea::vertical().id_salt("learned").max_height(120.0).show(ui, |ui| {
+                egui::Grid::new("eqov-learned")
+                    .num_columns(4)
+                    .spacing([14.0, 4.0])
+                    .striped(true)
+                    .show(ui, |ui| {
+                        ui.colored_label(dim, RichText::new("Spell").size(11.0));
+                        ui.colored_label(dim, RichText::new("Measured").size(11.0));
+                        ui.colored_label(dim, RichText::new("Seen").size(11.0));
+                        ui.label("");
+                        ui.end_row();
+                        for r in &rows {
+                            cell_line(ui, 170.0, r.spell.as_str(), Some(r.spell.clone()));
+                            ui.label(fmt_remaining(Duration::from_secs(r.seconds)));
+                            ui.colored_label(dim, format!("{}x", r.observations));
+                            if ui
+                                .small_button("forget")
+                                .on_hover_text("Drop this measurement; the bar re-learns it.")
+                                .clicked()
+                            {
+                                forget = Some(r.spell.clone());
+                            }
+                            ui.end_row();
+                        }
+                    });
+            });
+            if let Some(spell) = forget {
+                if let Some(s) = &self.store {
+                    s.forget_duration(&spell);
+                }
+            }
+            if ui
+                .button("Forget all measurements")
+                .on_hover_text("Every bar falls back to the game file's base rank and re-learns.")
+                .clicked()
+            {
+                if let Some(s) = &self.store {
+                    s.clear_durations();
+                }
+            }
+        }
+        ui.add_space(6.0);
+        ui.separator();
+        ui.label(RichText::new("This session").color(INK).strong().size(12.0));
+
         if self.spell_stats.is_empty() {
             ui.colored_label(dim, "Nothing tracked yet this session — land a spell on something.");
         } else {
@@ -1618,6 +1721,8 @@ impl OverlayApp {
             audio_enabled: self.audio_enabled,
             spawn_sound: &self.spawn_sound,
             auto_update: self.auto_update,
+
+            track_buffs: self.track_buffs,
         };
         if let Err(e) = crate::write_config_file(&self.info.config_save_path, &s) {
             log::error!("failed to write {}: {e}", self.info.config_save_path.display());
@@ -1752,6 +1857,8 @@ impl OverlayApp {
             audio_enabled: self.audio_enabled,
             spawn_sound: &self.spawn_sound,
             auto_update: self.auto_update,
+
+            track_buffs: self.track_buffs,
         };
         if let Err(e) = crate::write_config_file(&self.info.config_save_path, &s) {
             log::error!("failed to write {}: {e}", self.info.config_save_path.display());

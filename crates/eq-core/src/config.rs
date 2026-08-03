@@ -47,6 +47,10 @@ pub struct Config {
     /// file doesn't exist yet) — where in-game `add` commands append entries.
     #[serde(skip)]
     pub rare_db_path: Option<PathBuf>,
+    /// Resolved path of the learning database (`eq-overlay.db`, beside the
+    /// config). Holds what the overlay measured, never anything you typed.
+    #[serde(skip)]
+    pub store_path: Option<PathBuf>,
 }
 
 /// Update settings (the GUI's About tab writes these).
@@ -153,6 +157,12 @@ pub struct General {
     /// alone in game (`/join <name>`, optionally `:password`).
     #[serde(default)]
     pub command_channel: Option<String>,
+    /// Show a bar for each buff on YOU (default true). Debuffs you land on mobs
+    /// and rare respawn timers are unaffected — this is only the BUFFS section.
+    /// Off is for players who keep long buffs up permanently and would rather not
+    /// look at a dozen near-static bars.
+    #[serde(default)]
+    pub track_buffs: Option<bool>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -240,6 +250,9 @@ impl Config {
         let mut cfg =
             Self::parse(&text).with_context(|| format!("in config file: {}", path.display()))?;
         cfg.merge_rare_db(path.parent())?;
+        // The learning database lives beside the config, like rares.toml.
+        cfg.store_path =
+            Some(path.parent().unwrap_or_else(|| Path::new(".")).join(crate::store::DB_FILE));
         Ok(cfg)
     }
 

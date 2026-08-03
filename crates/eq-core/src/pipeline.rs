@@ -62,6 +62,9 @@ pub enum Control {
     /// Switch the in-game command channel live (no restart needed) — the
     /// Setup tab applies edits immediately.
     SetChannel { name: String },
+    /// Turn the BUFFS section on or off live (Spells tab). Off stops new buff
+    /// bars; debuffs and respawn timers are untouched.
+    SetTrackBuffs { enabled: bool },
 }
 
 #[derive(Debug, Clone)]
@@ -154,6 +157,14 @@ pub fn spawn_pipeline_with_control(
         .or_else(|| crate::config::char_server_from_log(&log_path).map(|(ch, _)| ch))
         .unwrap_or_else(|| "eqov".to_string());
     let zone_respawn = config.zone_respawn.clone();
+    // What we've learned from watching previous sessions. Optional by design: if
+    // the file can't be opened the overlay still runs, it just re-learns.
+    let store = config.store_path.as_deref().and_then(crate::store::Store::open);
+    match &store {
+        Some(s) => println!("  learned {} spell duration(s) from past sessions", s.duration_count()),
+        None => println!("  learned durations not persisted (no database)"),
+    }
+    let track_buffs = config.general.track_buffs.unwrap_or(true);
     let join = thread::spawn(move || {
         run(
             engine,
@@ -165,6 +176,8 @@ pub fn spawn_pipeline_with_control(
             rare_db_path,
             cmd_channel,
             zone_respawn,
+            store,
+            track_buffs,
             control_rx,
             events_tx,
         )
@@ -183,6 +196,8 @@ fn run(
     rare_db_path: Option<PathBuf>,
     cmd_channel: String,
     mut zone_respawn: HashMap<String, u64>,
+    store: Option<crate::store::Store>,
+    mut track_buffs: bool,
     control_rx: Receiver<Control>,
     events_tx: Sender<EngineEvent>,
 ) -> Result<()> {
@@ -313,8 +328,31 @@ fn run(
     let mut chan_cmd_re = channel_cmd_regex(&cmd_channel);
 
     // Auto-learned durations (spell -> max observed seconds), and the land time
-    // of each active keyed effect so we can measure land->wear-off.
-    let mut learned: HashMap<String, u64> = HashMap::new();
+    // of each active keyed effect so we can measure land->wear-off. Seeded from
+    // past sessions, so a mote rank measured yesterday is right on today's FIRST
+    // cast instead of after another full cycle.
+    let mut learned: HashMap<String, u64> = store
+        .as_ref()
+        .map(|s| s.load_durations())
+        .unwrap_or_default();
+
+    // Apply respawn estimates measured in past sessions. Only tightens, and only
+    // with more than one sample behind it, so one unlucky camp can't move a
+    // community-supplied time. The rares.toml value stays the published one; this
+    // is your own observation overriding it locally.
+    if let Some(s) = &store {
+        let observed: Vec<(String, u64)> = rares
+            .keys()
+            .filter_map(|name| s.respawn_estimate(name, 2).map(|secs| (name.clone(), secs)))
+            .collect();
+        for (name, secs) in observed {
+            if let Some(entry) = rares.get_mut(&name) {
+                if secs < entry.0 {
+                    entry.0 = secs;
+                }
+            }
+        }
+    }
     let mut land_times: HashMap<String, Instant> = HashMap::new();
 
     loop {
@@ -372,6 +410,9 @@ fn run(
                             return Ok(());
                         }
                     }
+                }
+                Control::SetTrackBuffs { enabled } => {
+                    track_buffs = enabled;
                 }
                 Control::SetChannel { name } => {
                     let t = name.trim();
@@ -489,7 +530,10 @@ fn run(
                 // on you by someone else resolves from that line alone, but only
                 // when it's unique to one buff (`match_self_land`). A full-line
                 // match, so ordinary combat text can't start a bar.
-                let buff: Option<SpellInfo> = pending
+                let buff: Option<SpellInfo> = if !track_buffs {
+                    None
+                } else {
+                    pending
                     .iter()
                     .position(|(info, _)| {
                         info.beneficial
@@ -499,7 +543,8 @@ fn run(
                     .map(|idx| pending.remove(idx).0)
                     .or_else(|| {
                         db.match_self_land(&parsed.message, player_level, &cast_history).cloned()
-                    });
+                    })
+                };
                 if let Some(info) = buff {
                     // The client file only has the BASE rank. Mote ranks
                     // ("Alacrity IV") are server-side and run far longer than the
@@ -564,6 +609,9 @@ fn run(
                         if actual > 0 && actual <= cap {
                             let e = learned.entry(spell.to_string()).or_insert(0);
                             *e = (*e).max(actual);
+                            if let Some(s) = &store {
+                                s.record_duration(spell, actual);
+                            }
                         }
                     }
                 }
@@ -594,6 +642,9 @@ fn run(
                     if actual > 0 && actual <= MAX_LEARNED_BUFF_SECS {
                         let e = learned.entry(name.clone()).or_insert(0);
                         *e = (*e).max(actual);
+                        if let Some(s) = &store {
+                            s.record_duration(name, actual);
+                        }
                     }
                 }
             }
@@ -616,6 +667,9 @@ fn run(
                     if actual > 0 && actual <= MAX_LEARNED_BUFF_SECS {
                         let e = learned.entry(name.to_string()).or_insert(0);
                         *e = (*e).max(actual);
+                        if let Some(s) = &store {
+                            s.record_duration(name, actual);
+                        }
                     }
                 }
                 if send(&events_tx, EngineEvent::ClearTimer { key }).is_none() {
@@ -675,6 +729,14 @@ fn run(
                     if let Some(prev) = rare_kill_at.get(&lower) {
                         let gap = prev.elapsed().as_secs();
                         let candidate = gap.saturating_sub(ENGAGE_BUFFER_SECS);
+                        // Keep the sample even when it doesn't beat what we have.
+                        // Evidence used to be discarded the moment you zoned; on
+                        // file it keeps improving the estimate across sessions.
+                        if gap >= MIN_CALIBRATION_GAP_SECS && candidate >= MIN_RESPAWN_SECS {
+                            if let Some(s) = &store {
+                                s.record_respawn_sample(&name, current_zone.as_deref(), candidate);
+                            }
+                        }
                         // Tighten-only: gaps overestimate the respawn (they
                         // include re-engage time), so the smallest plausible
                         // gap is the best estimate and can only shrink it.

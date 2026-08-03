@@ -11,7 +11,7 @@ default-members = ["crates/eq-core", "crates/eq-cli"]
 
 [workspace.package]
 edition = "2021"
-version = "0.2.14"
+version = "0.2.15"
 license = "MIT OR Apache-2.0"
 
 # Versions are pinned once here and referenced with `dep.workspace = true`
@@ -27,6 +27,9 @@ regex = "1"
 rodio = "0.19"
 clap = { version = "4", features = ["derive"] }
 tempfile = "3"
+# `bundled` compiles SQLite itself into the exe — the app stays a single file
+# you unzip and run, with no runtime or DLL to install.
+rusqlite = { version = "0.32", features = ["bundled"] }
 
 # Faster incremental dev builds; the tailer/overlay are latency-sensitive at
 # runtime but not CPU-bound, so this is purely a build-time convenience.
